@@ -330,7 +330,6 @@ def leave_one_out(cases: pd.DataFrame, emb_df: pd.DataFrame) -> list[LOOResult]:
             row["name_roman"]: projection_slope(project_trajectory(emb_df, row["dong_code"], axis))
             for _, row in controls.iterrows()
         }
-        all_slopes = [held_slope, *ctrl_slopes.values()]
         rank = 1 + sum(1 for s in ctrl_slopes.values() if s > held_slope)
         auc = sum(1 for s in ctrl_slopes.values() if held_slope > s) / len(ctrl_slopes)
         results.append(LOOResult(
