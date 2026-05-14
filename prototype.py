@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,8 @@ DATA = HERE / "data"
 OUT = HERE / "outputs"
 CASES_CSV = DATA / "labeled_cases.csv"
 POLY_GEOJSON = DATA / "dong_polygons.geojson"
+MOLIT_CACHE_DIR = DATA / "molit_cache"
+MOLIT_RAW_PARQUET = DATA / "molit_rent_raw.parquet"
 
 
 def embed_cache(mode: str) -> Path:
@@ -55,14 +58,22 @@ def embed_cache(mode: str) -> Path:
     return DATA / f"alphaearth_{mode}.parquet"
 
 
-def wolse_cache(mode: str) -> Path:
-    return DATA / f"wolse_{mode}.parquet"
+def wolse_cache(source: str) -> Path:
+    return DATA / f"wolse_{source}.parquet"
 
 YEARS = list(range(2017, 2025))          # AlphaEarth annual coverage 2017-
 EMBED_DIM = 64
 EMBED_COLS = [f"A{i:02d}" for i in range(EMBED_DIM)]
 SEED = 7
 BOX_HALF_DEG = 0.005                     # ~0.5 km half-side bounding box
+
+# Three-way label scheme — see labeled_cases.csv:
+#   active_panel : gentrification cycle plausibly still active during 2017-24
+#   post_peak    : cycle finished mostly before the panel; useful for morphology
+#   control      : no major redevelopment/gentrification shock
+# Axis is learned only from active_panel cases (the within-panel hypothesis).
+GENT_LABELS = ("active_panel", "post_peak")
+AXIS_TRAIN_LABEL = "active_panel"
 
 
 # ─── Data scaffolding ─────────────────────────────────────────────────────
@@ -112,7 +123,7 @@ def synth_embeddings(cases: pd.DataFrame, seed: int = SEED) -> pd.DataFrame:
     rows: list[dict] = []
     for r in cases.itertuples():
         base = rng.standard_normal(EMBED_DIM) * 0.5            # per-dong baseline
-        if r.label == "gentrified":
+        if r.label in GENT_LABELS:
             alpha = rng.uniform(0.35, 0.65)                    # peak drift magnitude
             for y in YEARS:
                 if y <= r.start_year:
@@ -150,7 +161,7 @@ def synth_wolse(cases: pd.DataFrame, seed: int = SEED + 1) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
     for r in cases.itertuples():
-        if r.label == "gentrified":
+        if r.label in GENT_LABELS:
             wolse_start = rng.uniform(0.30, 0.40)
             wolse_end = rng.uniform(0.60, 0.72)
             for y in YEARS:
@@ -175,7 +186,11 @@ def synth_wolse(cases: pd.DataFrame, seed: int = SEED + 1) -> pd.DataFrame:
 
 # ─── Real Earth Engine extractor (--mode ee) ──────────────────────────────
 
-def extract_ee_embeddings(cases: pd.DataFrame, gcp_project: str) -> pd.DataFrame:
+def extract_ee_embeddings(
+        cases: pd.DataFrame,
+        gcp_project: str,
+        service_account_key: str | None = None,
+) -> pd.DataFrame:
     """Pull AlphaEarth annual mean embeddings per dong polygon at 10m scale.
 
     Real run: requires `earthengine-api` configured + a GCP project. Polygons
@@ -183,7 +198,12 @@ def extract_ee_embeddings(cases: pd.DataFrame, gcp_project: str) -> pd.DataFrame
     admin polygons for production results.
     """
     import ee
-    ee.Initialize(project=gcp_project)
+    if service_account_key:
+        info = json.loads(Path(service_account_key).read_text(encoding="utf-8"))
+        credentials = ee.ServiceAccountCredentials(info["client_email"], service_account_key)
+        ee.Initialize(credentials, project=gcp_project)
+    else:
+        ee.Initialize(project=gcp_project)
     polys = json.loads(POLY_GEOJSON.read_text(encoding="utf-8"))
     poly_by_code = {f["properties"]["dong_code"]: f["geometry"] for f in polys["features"]}
 
@@ -222,14 +242,19 @@ def _shrink_wolse(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_embeddings(cases: pd.DataFrame, mode: str, gcp_project: str | None) -> pd.DataFrame:
+def get_embeddings(
+        cases: pd.DataFrame,
+        mode: str,
+        gcp_project: str | None,
+        service_account_key: str | None = None,
+) -> pd.DataFrame:
     path = embed_cache(mode)
     if path.exists():
         return pd.read_parquet(path)
     if mode == "ee":
         if not gcp_project:
             sys.exit("--mode ee requires --gcp-project")
-        df = extract_ee_embeddings(cases, gcp_project)
+        df = extract_ee_embeddings(cases, gcp_project, service_account_key)
     else:
         df = synth_embeddings(cases)
     df = _shrink_embeddings(df)
@@ -237,14 +262,23 @@ def get_embeddings(cases: pd.DataFrame, mode: str, gcp_project: str | None) -> p
     return df
 
 
-def get_wolse(cases: pd.DataFrame, mode: str) -> pd.DataFrame:
-    """Wolse is mocked in both modes — a real MOLIT client is out of scope
-    for this prototype. The cache is still mode-tagged so that when a real
-    MOLIT client lands, ee-mode wolse won't be silently served from mock."""
-    path = wolse_cache(mode)
+def get_wolse(cases: pd.DataFrame, source: str) -> pd.DataFrame:
+    """source ∈ {'mock', 'molit'}. Independent of --mode: you can pair real
+    AlphaEarth with mock wolse for axis debugging, or mock embeddings with
+    a live MOLIT pull to shake out the rent pipeline. Cache is source-tagged
+    so a mock run never gets silently served when --wolse-source molit is
+    later requested.
+
+    molit branch raises (does not silently return empty) on any irrecoverable
+    API failure — see molit_client.fetch_rent_panel for guardrails."""
+    path = wolse_cache(source)
     if path.exists():
         return pd.read_parquet(path)
-    df = _shrink_wolse(synth_wolse(cases))
+    if source == "molit":
+        from molit_client import fetch_rent_panel
+        df = fetch_rent_panel(cases, YEARS, MOLIT_CACHE_DIR, raw_out=MOLIT_RAW_PARQUET)
+    else:
+        df = _shrink_wolse(synth_wolse(cases))
     df.to_parquet(path, index=False)
     return df
 
@@ -317,12 +351,16 @@ class LOOResult:
 
 
 def leave_one_out(cases: pd.DataFrame, emb_df: pd.DataFrame) -> list[LOOResult]:
-    gentrified = cases[cases["label"] == "gentrified"].reset_index(drop=True)
+    """LOO over active_panel cases only — these are the ones whose gentrification
+    cycle plausibly overlaps the AlphaEarth panel (2017-24). post_peak cases are
+    excluded from training and from the held-out set; they're evaluated separately
+    via evaluate_post_peak()."""
+    active = cases[cases["label"] == AXIS_TRAIN_LABEL].reset_index(drop=True)
     controls = cases[cases["label"] == "control"].reset_index(drop=True)
     results: list[LOOResult] = []
-    for i in range(len(gentrified)):
-        held = gentrified.iloc[i]
-        training = gentrified.drop(index=i)
+    for i in range(len(active)):
+        held = active.iloc[i]
+        training = active.drop(index=i)
         axis = learn_axis(emb_df, training)
 
         held_slope = projection_slope(project_trajectory(emb_df, held["dong_code"], axis))
@@ -342,28 +380,58 @@ def leave_one_out(cases: pd.DataFrame, emb_df: pd.DataFrame) -> list[LOOResult]:
     return results
 
 
+def evaluate_post_peak(
+        cases: pd.DataFrame, emb_df: pd.DataFrame, axis: np.ndarray,
+) -> list[LOOResult]:
+    """Project each post_peak case onto the full active_panel axis and rank
+    against the same controls. If post_peak cases also rank above controls,
+    the axis is picking up morphological signatures (commercial density, etc.)
+    that linger beyond the gentrification cycle — useful but a different
+    claim than 'detecting active transition'."""
+    post_peak = cases[cases["label"] == "post_peak"].reset_index(drop=True)
+    controls = cases[cases["label"] == "control"].reset_index(drop=True)
+    results: list[LOOResult] = []
+    for _, row in post_peak.iterrows():
+        s = projection_slope(project_trajectory(emb_df, row["dong_code"], axis))
+        ctrl_slopes = {
+            r["name_roman"]: projection_slope(project_trajectory(emb_df, r["dong_code"], axis))
+            for _, r in controls.iterrows()
+        }
+        rank = 1 + sum(1 for cs in ctrl_slopes.values() if cs > s)
+        auc = sum(1 for cs in ctrl_slopes.values() if s > cs) / len(ctrl_slopes)
+        results.append(LOOResult(
+            held_out=row["name_roman"], held_out_slope=s,
+            control_slopes=ctrl_slopes, rank_among_controls=rank, auc_pair=auc,
+        ))
+    return results
+
+
 # ─── Plotting ─────────────────────────────────────────────────────────────
+
+LABEL_STYLE = {
+    "active_panel": {"color": "#d23",   "lw": 2.2, "alpha": 0.95, "annotate": True},
+    "post_peak":    {"color": "#f0883e", "lw": 1.6, "alpha": 0.85, "annotate": True},
+    "control":      {"color": "#6a737d", "lw": 1.2, "alpha": 0.55, "annotate": False},
+}
+
 
 def plot_trajectories(emb_df: pd.DataFrame, cases: pd.DataFrame,
                       axis: np.ndarray, mode: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 6))
     for _, c in cases.iterrows():
         traj = project_trajectory(emb_df, c["dong_code"], axis)
-        is_gent = c["label"] == "gentrified"
+        style = LABEL_STYLE.get(c["label"], LABEL_STYLE["control"])
         ax.plot(traj["year"], traj["projection"],
-                marker="o", lw=2 if is_gent else 1.2,
-                color="#d23" if is_gent else "#6a737d",
-                alpha=0.95 if is_gent else 0.55,
-                label=c["name_roman"])
-        # annotate gentrified line at its end
-        if is_gent:
+                marker="o", lw=style["lw"], color=style["color"],
+                alpha=style["alpha"], label=c["name_roman"])
+        if style["annotate"]:
             ax.text(traj["year"].iloc[-1] + 0.1, traj["projection"].iloc[-1],
-                    c["name_roman"], fontsize=8, color="#d23", va="center")
+                    c["name_roman"], fontsize=8, color=style["color"], va="center")
     src = "MOCK synthetic embeddings" if mode == "mock" else "AlphaEarth (live EE)"
     ax.set_xlabel("Year")
     ax.set_ylabel("Projection onto learned within-panel drift axis")
     ax.set_title(f"Per-dong trajectory in embedding space  [{src}]\n"
-                 "axis learned from 6 labeled Seoul cases; controls in grey")
+                 "axis learned from active_panel cases only; post_peak in orange, controls in grey")
     ax.grid(True, alpha=0.3)
     ax.legend(ncol=2, fontsize=7, loc="upper left", framealpha=0.9)
     plt.tight_layout()
@@ -383,7 +451,8 @@ def plot_projection_scatter(emb_df: pd.DataFrame, wolse_df: pd.DataFrame,
     df = pd.DataFrame(rows)
 
     fig, ax = plt.subplots(figsize=(8.5, 6.5))
-    for label, color in [("gentrified", "#d23"), ("control", "#6a737d")]:
+    for label in ("active_panel", "post_peak", "control"):
+        color = LABEL_STYLE[label]["color"]
         sub = df[df["label"] == label]
         ax.scatter(sub["axis_slope"], sub["wolse_slope"],
                    c=color, s=110, edgecolors="white", linewidths=1.2,
@@ -399,7 +468,8 @@ def plot_projection_scatter(emb_df: pd.DataFrame, wolse_df: pd.DataFrame,
     ax.set_xlabel(f"Embedding-axis slope  [{emb_src}]")
     ax.set_ylabel(f"Wolse-ratio slope  [{wolse_src}]")
     ax.set_title(f"Two-signal separation  ({emb_src}  ×  {wolse_src})\n"
-                 "Scaffold check: gentrified cases should cluster upper-right")
+                 "active_panel = red, post_peak = orange, control = grey  "
+                 f"{'(wolse axis is MOCKED — diagnostic only)' if wolse_is_mock else ''}")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left", framealpha=0.9)
     plt.tight_layout()
@@ -415,7 +485,11 @@ def z(x: np.ndarray) -> np.ndarray:
 
 
 def composite_ranking(emb_df: pd.DataFrame, wolse_df: pd.DataFrame,
-                      cases: pd.DataFrame, axis: np.ndarray) -> pd.DataFrame:
+                      cases: pd.DataFrame, axis: np.ndarray,
+                      include_wolse: bool = False) -> pd.DataFrame:
+    """Rank by axis_z only by default; wolse is mocked at the moment and
+    pulling it into the composite makes the ordering misleading. The wolse
+    slope and z-score are still computed for inspection."""
     rows = []
     for _, c in cases.iterrows():
         slope = projection_slope(project_trajectory(emb_df, c["dong_code"], axis))
@@ -425,30 +499,35 @@ def composite_ranking(emb_df: pd.DataFrame, wolse_df: pd.DataFrame,
     df = pd.DataFrame(rows)
     df["axis_z"] = z(df["axis_slope"].values)
     df["wolse_z"] = z(df["wolse_slope"].values)
-    df["composite_z"] = df["axis_z"] + df["wolse_z"]
+    df["composite_z"] = df["axis_z"] + df["wolse_z"] if include_wolse else df["axis_z"]
     return df.sort_values("composite_z", ascending=False).reset_index(drop=True)
 
 
-def print_loo_summary(loo: list[LOOResult]) -> None:
-    print("\nLeave-one-out validation")
+def print_loo_summary(loo: list[LOOResult], title: str, n_controls: int) -> None:
+    print(f"\n{title}")
     print("-" * 60)
-    print(f"{'held-out':<14} {'slope':>8}  {'rank/7':>7}  {'AUC-pair':>9}")
+    print(f"{'held-out':<14} {'slope':>8}  {'rank/'+str(n_controls+1):>7}  {'AUC-pair':>9}")
     for r in loo:
         print(f"{r.held_out:<14} {r.held_out_slope:>+8.4f}  "
-              f"{r.rank_among_controls:>3} / 7  {r.auc_pair:>9.2f}")
+              f"{r.rank_among_controls:>3} / {n_controls+1}  {r.auc_pair:>9.2f}")
+    if not loo:
+        print("(no cases in this group)")
+        return
     p_at_1 = sum(1 for r in loo if r.rank_among_controls == 1) / len(loo)
     mean_auc = sum(r.auc_pair for r in loo) / len(loo)
     print("-" * 60)
     print(f"precision@1 = {p_at_1:.2f}    mean AUC-pair = {mean_auc:.2f}")
 
 
-def print_ranking(df: pd.DataFrame) -> None:
-    print("\nComposite ranking (axis_z + wolse_z)")
+def print_ranking(df: pd.DataFrame, include_wolse: bool) -> None:
+    title = ("Composite ranking (axis_z + wolse_z)" if include_wolse
+             else "Ranking by axis_z  [wolse shown for diagnostic only — MOCKED]")
+    print(f"\n{title}")
     print("-" * 70)
-    print(f"{'rank':>4}  {'dong':<14} {'label':<11} {'axis_z':>7} {'wolse_z':>8} {'composite':>10}")
+    print(f"{'rank':>4}  {'dong':<14} {'label':<13} {'axis_z':>7} {'wolse_z*':>9} {'rank_z':>8}")
     for i, r in df.iterrows():
-        print(f"{i + 1:>4}  {r['name_roman']:<14} {r['label']:<11} "
-              f"{r['axis_z']:>+7.2f} {r['wolse_z']:>+8.2f} {r['composite_z']:>+10.2f}")
+        print(f"{i + 1:>4}  {r['name_roman']:<14} {r['label']:<13} "
+              f"{r['axis_z']:>+7.2f} {r['wolse_z']:>+9.2f} {r['composite_z']:>+8.2f}")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
@@ -456,9 +535,17 @@ def print_ranking(df: pd.DataFrame) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--mode", choices=["mock", "ee"], default="mock",
-                    help="data source: synthetic (default) or live Earth Engine")
+                    help="embedding source: synthetic (default) or live Earth Engine")
+    ap.add_argument("--wolse-source", choices=["mock", "molit"], default="mock",
+                    help="wolse source: synthetic (default) or live MOLIT (data.go.kr); "
+                         "molit requires MOLIT_SERVICE_KEY env var and a dong_name_kr "
+                         "column in labeled_cases.csv. Independent of --mode.")
     ap.add_argument("--gcp-project", default=None,
                     help="GCP project id (required for --mode ee)")
+    ap.add_argument("--service-account-key",
+                    default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                    help="path to Earth Engine service-account JSON key; "
+                         "may also be set via GOOGLE_APPLICATION_CREDENTIALS")
     ap.add_argument("--rebuild-cache", action="store_true",
                     help="delete cached embeddings/wolse parquet files and regenerate")
     args = ap.parse_args(argv)
@@ -467,38 +554,57 @@ def main(argv: list[str] | None = None) -> int:
     OUT.mkdir(exist_ok=True)
 
     if args.rebuild_cache:
-        for p in (embed_cache(args.mode), wolse_cache(args.mode)):
+        for p in (embed_cache(args.mode), wolse_cache(args.wolse_source)):
             p.unlink(missing_ok=True)
 
     cases = load_cases()
     write_polygons_if_absent(cases)
-    emb_df = get_embeddings(cases, args.mode, args.gcp_project)
-    wolse_df = get_wolse(cases, args.mode)
-    wolse_is_mock = True  # no real MOLIT client yet — always mocked, see get_wolse()
+    emb_df = get_embeddings(cases, args.mode, args.gcp_project, args.service_account_key)
+    wolse_df = get_wolse(cases, args.wolse_source)
+    wolse_is_mock = (args.wolse_source == "mock")
 
+    n_active = (cases["label"] == "active_panel").sum()
+    n_post = (cases["label"] == "post_peak").sum()
+    n_ctrl = (cases["label"] == "control").sum()
     print(f"Loaded {len(cases)} cases  "
-          f"({(cases['label'] == 'gentrified').sum()} gentrified, "
-          f"{(cases['label'] == 'control').sum()} controls)")
+          f"({n_active} active_panel, {n_post} post_peak, {n_ctrl} controls)")
     print(f"Embeddings: {len(emb_df)} rows  ({args.mode} mode)")
+    print(f"Wolse: {len(wolse_df)} rows  (source={args.wolse_source})")
     if args.mode == "mock":
         print("  [scaffold check] mock data has a planted shared drift direction;\n"
               "  perfect LOO is expected and is NOT empirical validation.")
     if wolse_is_mock:
-        print("  [scaffold check] wolse is mocked - no MOLIT client yet.")
+        print("  [scaffold check] wolse is mocked "
+              "(excluded from composite ranking by default).")
+    elif "n_rent_deals" in wolse_df.columns:
+        n_deals = int(wolse_df["n_rent_deals"].sum())
+        print(f"  MOLIT panel: {n_deals} total rent deals "
+              f"across {wolse_df['dong_code'].nunique()} dongs.")
 
-    # Full-data axis for display and ranking
-    gentrified = cases[cases["label"] == "gentrified"]
-    axis = learn_axis(emb_df, gentrified)
-    print(f"Learned gentrification axis: ||a|| = {np.linalg.norm(axis):.4f}  "
-          f"(unit-normalised)")
+    # Axis learned from active_panel cases only (the within-panel hypothesis)
+    active_cases = cases[cases["label"] == AXIS_TRAIN_LABEL]
+    if len(active_cases) < 2:
+        print(f"  WARNING: only {len(active_cases)} active_panel cases — LOO "
+              "trains on a single delta vector per fold.")
+    axis = learn_axis(emb_df, active_cases)
+    print(f"Learned gentrification axis (n={len(active_cases)} active_panel cases): "
+          f"||a|| = {np.linalg.norm(axis):.4f}  (unit-normalised)")
 
-    # Leave-one-out validation
+    # Leave-one-out validation on active_panel cases
     loo = leave_one_out(cases, emb_df)
-    print_loo_summary(loo)
+    print_loo_summary(loo, "Leave-one-out validation  [active_panel vs controls]", n_ctrl)
 
-    # Composite ranking
-    rank_df = composite_ranking(emb_df, wolse_df, cases, axis)
-    print_ranking(rank_df)
+    # Separate evaluation: project post_peak cases onto the full active_panel axis
+    post_peak_eval = evaluate_post_peak(cases, emb_df, axis)
+    print_loo_summary(
+        post_peak_eval,
+        "Post-peak morphology evaluation  [post_peak vs controls, full active_panel axis]",
+        n_ctrl,
+    )
+
+    # Composite ranking — axis only (wolse mocked, see prior note)
+    rank_df = composite_ranking(emb_df, wolse_df, cases, axis, include_wolse=False)
+    print_ranking(rank_df, include_wolse=False)
 
     # Plots
     plot_trajectories(emb_df, cases, axis, args.mode, OUT / "trajectories.png")

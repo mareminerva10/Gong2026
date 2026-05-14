@@ -1,0 +1,29 @@
+# Service-account / credential files — never commit
+*.json
+!*.ipynb_checkpoints/*.json
+gong2026-*.json
+**/service-account*.json
+**/credentials*.json
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Data: hand-curated inputs tracked; raw pulls, caches, and outputs ignored.
+# Pattern: parent ignores everything in data/, then whitelist specific files.
+data/*
+!data/
+!data/labeled_cases.csv
+!data/README.md
+# Defense in depth — explicit re-ignores so a future !data/foo/ exception
+# can't accidentally pull in caches or raw API dumps.
+data/*.parquet
+data/**/*.parquet
+data/*_raw*
+data/molit_cache/
+
+# Generated plots
+outputs/
