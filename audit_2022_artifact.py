@@ -146,7 +146,15 @@ def initialize_ee(gcp_project: str, service_account_key: str | None) -> None:
 
 
 def fetch_one(poly_geom: dict, year: int) -> np.ndarray | None:
-    """Mean AlphaEarth embedding over one polygon for one annual mosaic."""
+    """Mean AlphaEarth embedding over one polygon for one annual mosaic.
+
+    TODO: For samples > ~150 polygons, replace this per-(polygon, year)
+    reduceRegion().getInfo() pattern with per-year reduceRegions() over a
+    FeatureCollection (or an Earth Engine Task export to Cloud Storage /
+    Drive followed by a local table read). At audit scale (~1k calls) the
+    current pattern is acceptable; at production scale it is a quota and
+    latency bottleneck.
+    """
     import ee
     geom = ee.Geometry(poly_geom)
     coll = (ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
@@ -161,40 +169,76 @@ def fetch_one(poly_geom: dict, year: int) -> np.ndarray | None:
     return np.array([float(stats.get(b, 0.0)) for b in EMBED_COLS], dtype="float32")
 
 
-def fetch_embeddings(polys: list[dict], years: list[int]) -> pd.DataFrame:
-    AUDIT_CACHE.mkdir(parents=True, exist_ok=True)
+def fetch_embeddings(polys: list[dict], years: list[int],
+                     offline: bool = False) -> pd.DataFrame:
+    """Pull or load AlphaEarth annual means for each (polygon, year).
+
+    Per-call results are cached as Parquet under AUDIT_CACHE/, so partial runs
+    survive restarts. offline=True skips the network entirely and only
+    returns what's already cached -- (poly, year) pairs without a cache file
+    are reported as missing per bucket.
+    """
+    if not offline:
+        AUDIT_CACHE.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
+    missing_by_bucket: dict[str, int] = {}
     total = len(polys) * len(years)
-    seen = 0
     pulled = 0
+    cached = 0
     for p in polys:
+        bucket = bucket_of(p["city"], p["kind"])
         for y in years:
-            seen += 1
             cache = AUDIT_CACHE / f"{p['poly_id']}_{y}.parquet"
             if cache.exists():
-                rec = pd.read_parquet(cache).iloc[0].to_dict()
-            else:
-                vec = fetch_one(p["geometry"], y)
-                if vec is None:
-                    print(f"  ! no embedding {p['poly_id']} {y}", file=sys.stderr)
-                    continue
-                rec = {"poly_id": p["poly_id"], "city": p["city"],
-                       "kind": p["kind"], "year": int(y),
-                       **dict(zip(EMBED_COLS, vec.tolist()))}
-                pd.DataFrame([rec]).to_parquet(cache, index=False)
-                pulled += 1
-                if pulled % 25 == 0:
-                    print(f"  ... pulled {pulled} (seen {seen}/{total})")
-                time.sleep(0.05)
+                rows.append(pd.read_parquet(cache).iloc[0].to_dict())
+                cached += 1
+                continue
+            if offline:
+                missing_by_bucket[bucket] = missing_by_bucket.get(bucket, 0) + 1
+                continue
+            vec = fetch_one(p["geometry"], y)
+            if vec is None:
+                missing_by_bucket[bucket] = missing_by_bucket.get(bucket, 0) + 1
+                print(f"  ! no embedding {p['poly_id']} {y}", file=sys.stderr)
+                continue
+            rec = {"poly_id": p["poly_id"], "city": p["city"],
+                   "kind": p["kind"], "year": int(y),
+                   **dict(zip(EMBED_COLS, vec.tolist()))}
+            pd.DataFrame([rec]).to_parquet(cache, index=False)
             rows.append(rec)
-    print(f"  done: {seen} records, {pulled} fresh, {seen - pulled} from cache")
+            pulled += 1
+            if pulled % 25 == 0:
+                print(f"  ... pulled {pulled}/{total}")
+            time.sleep(0.05)
+    print(f"  embeddings: {pulled} fresh, {cached} cached, "
+          f"{sum(missing_by_bucket.values())} missing  (expected {total})")
+    if missing_by_bucket:
+        print("  missing by bucket:")
+        for b, n in sorted(missing_by_bucket.items()):
+            print(f"    {b:<24} {n}")
     return pd.DataFrame(rows)
 
 
 # --- YoY distance metrics -------------------------------------------------
 
+def _unit(v: np.ndarray) -> np.ndarray:
+    """L2-normalize a vector. Returns the zero vector unchanged."""
+    n = float(np.linalg.norm(v))
+    return v / n if n > 1e-9 else v
+
+
 def yoy_distances(emb_df: pd.DataFrame) -> pd.DataFrame:
-    """One row per (poly_id, year_pair) with angular / cosine / Euclidean distances."""
+    """One row per (poly_id, year_pair) with angular / cosine / Euclidean.
+
+    Vectors are L2-normalized before computing angular and cosine. AlphaEarth
+    pixel embeddings are designed for cosine comparison, but a polygon mean
+    over many pixels is NOT guaranteed to remain unit-length, so without
+    explicit normalization the angular metric would silently confound
+    direction change with magnitude drift. Euclidean is intentionally left on
+    the raw (un-normalized) mean vectors so it captures magnitude drift the
+    directional metrics ignore -- that divergence is one branch of the
+    decision rule in print_decision().
+    """
     out: list[dict] = []
     for pid, sub in emb_df.groupby("poly_id"):
         sub = sub.sort_values("year")
@@ -204,12 +248,8 @@ def yoy_distances(emb_df: pd.DataFrame) -> pd.DataFrame:
         kind = sub["kind"].iloc[0]
         for i in range(len(years) - 1):
             a, b = vecs[i], vecs[i + 1]
-            na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
-            if na > 1e-9 and nb > 1e-9:
-                cos = float(np.dot(a, b) / (na * nb))
-                cos = max(-1.0, min(1.0, cos))
-            else:
-                cos = 1.0
+            a_n, b_n = _unit(a), _unit(b)
+            cos = float(np.clip(np.dot(a_n, b_n), -1.0, 1.0))
             out.append({
                 "poly_id": pid,
                 "city": city,
@@ -473,16 +513,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.exit("EE fetch needs --gcp-project (or pass --offline to use cache only)")
         print(f"Initializing Earth Engine with project={args.gcp_project} ...")
         initialize_ee(args.gcp_project, args.service_account_key)
-        emb_df = fetch_embeddings(polys, YEARS)
     else:
         print("Offline mode: assembling from cache only.")
-        rows = []
-        for p in polys:
-            for y in YEARS:
-                cache = AUDIT_CACHE / f"{p['poly_id']}_{y}.parquet"
-                if cache.exists():
-                    rows.append(pd.read_parquet(cache).iloc[0].to_dict())
-        emb_df = pd.DataFrame(rows)
+    emb_df = fetch_embeddings(polys, YEARS, offline=args.offline)
 
     if emb_df.empty:
         sys.exit("no embeddings available; nothing to audit")
