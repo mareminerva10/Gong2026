@@ -8,6 +8,17 @@ demonstrable and validatable. Replaces the v2.0 file's hand-picked
 labeled before/after Seoul cases, drops the unvalidated transit/commute
 layers, and adds leave-one-out validation against control dongs.
 
+Model panel
+-----------
+Each run also assembles a derived per-(dong, year) panel at
+`data/dong_year_model_panel.parquet`, joining case metadata, embeddings,
+their axis projection, wolse, and the `national_redevelopment_intensity_*`
+control. The redev control is a **year-level national** redevelopment
+intensity from MOLIT 통계누리 redev 6189/1 (national annual aggregate); it
+is NOT a gu-level or dong-level announcement-exposure variable, and
+downstream interpretation must keep that distinction. The raw caches
+(`alphaearth_*.parquet`, `wolse_*.parquet`) are read but not mutated.
+
 Method
 ------
 1. Pick 6 well-documented Seoul gentrified dongs (before/after years known)
@@ -51,6 +62,22 @@ CASES_CSV = DATA / "labeled_cases.csv"
 POLY_GEOJSON = DATA / "dong_polygons.geojson"
 MOLIT_CACHE_DIR = DATA / "molit_cache"
 MOLIT_RAW_PARQUET = DATA / "molit_rent_raw.parquet"
+REDEV_PANEL_PATH = DATA / "national_redevelopment_intensity.parquet"
+MODEL_PANEL_PATH = DATA / "dong_year_model_panel.parquet"
+
+# Mapping from build_national_redev_panel's column names to the panel-side
+# `national_redevelopment_intensity_*` framing. The long prefix makes the
+# non-local nature of the variable survive future re-merges and notebook
+# inspections; do not shorten it.
+REDEV_COLUMN_RENAME = {
+    "redev_zone_count":         "national_redevelopment_intensity_zone_count",
+    "redev_area_m2":            "national_redevelopment_intensity_area_m2",
+    "redev_demolition_targets": "national_redevelopment_intensity_demolition_targets",
+    "redev_units_total":        "national_redevelopment_intensity_units_total",
+    "redev_units_member":       "national_redevelopment_intensity_units_member",
+    "redev_units_general_sale": "national_redevelopment_intensity_units_general_sale",
+    "redev_units_rental":       "national_redevelopment_intensity_units_rental",
+}
 
 
 def embed_cache(mode: str) -> Path:
@@ -530,6 +557,58 @@ def print_ranking(df: pd.DataFrame, include_wolse: bool) -> None:
               f"{r['axis_z']:>+7.2f} {r['wolse_z']:>+9.2f} {r['composite_z']:>+8.2f}")
 
 
+# ─── Model panel assembly ────────────────────────────────────────────────
+
+def load_redev_panel() -> pd.DataFrame | None:
+    """Load the cached national_redevelopment_intensity parquet built by
+    `molit_redev_client.build_national_redev_panel`. Returns None (with a
+    warning) if the parquet is missing — the prototype's core LOO analysis
+    does not depend on this control, so missing redev should not abort
+    the run. Rebuild via `molit_redev_client fetch-raw` + the build
+    function in that module."""
+    if not REDEV_PANEL_PATH.exists():
+        print(f"  WARNING: {REDEV_PANEL_PATH.name} missing — model panel will "
+              "be built without national_redevelopment_intensity_* columns. "
+              "Build with molit_redev_client.fetch_table_raw + "
+              "build_national_redev_panel.", file=sys.stderr)
+        return None
+    df = pd.read_parquet(REDEV_PANEL_PATH)
+    # Cast year to match the prototype's caches so the join doesn't widen.
+    df["year"] = df["year"].astype("int16")
+    return df
+
+
+def build_model_panel(cases: pd.DataFrame, emb_df: pd.DataFrame,
+                      wolse_df: pd.DataFrame, axis: np.ndarray,
+                      redev_panel: pd.DataFrame | None,
+                      embed_mode: str, wolse_source: str) -> pd.DataFrame:
+    """Assemble the derived (dong_code, year) model panel.
+
+    Columns:
+      dong_code, name_roman, label, year
+      <whatever wolse columns are present in wolse_df>
+      A00..A63 (raw embedding centroids)
+      axis_projection (scalar embedding · axis for that row)
+      national_redevelopment_intensity_* (joined by year only — same value
+                                          for every dong within a year,
+                                          which is correct: this is a
+                                          NATIONAL control, not local)
+      embed_mode, wolse_source (provenance — auditable from the panel alone)
+    """
+    base = (cases[["dong_code", "name_roman", "label"]]
+            .merge(pd.DataFrame({"year": pd.array(YEARS, dtype="int16")}),
+                   how="cross"))
+    panel = base.merge(wolse_df, on=["dong_code", "year"], how="left")
+    panel = panel.merge(emb_df, on=["dong_code", "year"], how="left")
+    panel["axis_projection"] = (panel[EMBED_COLS].values @ axis).astype("float32")
+    if redev_panel is not None:
+        renamed = redev_panel.rename(columns=REDEV_COLUMN_RENAME)
+        panel = panel.merge(renamed, on="year", how="left")
+    panel["embed_mode"] = embed_mode
+    panel["wolse_source"] = wolse_source
+    return panel
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,6 +690,20 @@ def main(argv: list[str] | None = None) -> int:
     plot_projection_scatter(emb_df, wolse_df, cases, axis, args.mode, wolse_is_mock,
                             OUT / "projection_scatter.png")
     print(f"\nPlots written:\n  {OUT / 'trajectories.png'}\n  {OUT / 'projection_scatter.png'}")
+
+    # Derived model panel — joined (dong, year) table with national redev control.
+    redev_panel = load_redev_panel()
+    model_panel = build_model_panel(
+        cases, emb_df, wolse_df, axis, redev_panel,
+        embed_mode=args.mode, wolse_source=args.wolse_source,
+    )
+    model_panel.to_parquet(MODEL_PANEL_PATH, index=False)
+    n_redev_cols = sum(c.startswith("national_redevelopment_intensity_")
+                       for c in model_panel.columns)
+    print(f"Model panel written: {MODEL_PANEL_PATH}  "
+          f"rows={len(model_panel)}  cols={len(model_panel.columns)}  "
+          f"redev_cols={n_redev_cols}  embed_mode={args.mode}  "
+          f"wolse_source={args.wolse_source}")
     return 0
 
 
