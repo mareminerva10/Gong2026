@@ -612,6 +612,13 @@ def build_model_panel(cases: pd.DataFrame, emb_df: pd.DataFrame,
 # ─── CLI ──────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
+    # Force UTF-8 on stdout/stderr so non-ASCII characters in the ranking
+    # output (em-dashes, Korean dong names, etc.) don't crash the run on
+    # Windows consoles defaulting to cp949. No-op on platforms already
+    # using UTF-8.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--mode", choices=["mock", "ee"], default="mock",
                     help="embedding source: synthetic (default) or live Earth Engine")
