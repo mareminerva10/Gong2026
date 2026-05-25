@@ -14,6 +14,15 @@ Seoul gentrification research prototype. Pairs Google AlphaEarth satellite embed
 
 ## Methodology
 
+### Current control status
+
+Live, non-mocked controls currently included in the model panel:
+
+- `national_redevelopment_intensity_*`: live StatNuri redevelopment table `form_id=6189`, `style_num=1`, 2017–2024. This is a national year-level redevelopment pressure control, not a local treatment.
+- `statnuri_unsold_mean_units`, `statnuri_unsold_max_units`, `statnuri_unsold_dec_units`: live StatNuri unsold-housing table `form_id=2082`, `style_num=128`, aggregated from monthly Seoul gu-level rows to annual gu-level housing-market stress controls.
+- `wolse_ratio`: still synthetic/mock-shaped. The live data.go.kr apartment rent transaction pull remains parked pending a valid decoded data.go.kr key for `RTMSDataSvcAptRent`.
+- Reconstruction controls remain parked: the granted StatNuri reconstruction table returns empty metric rows at `style_num=1`.
+
 1. Pick labeled Seoul cases: 2 active_panel gentrifying dongs, 4 post_peak (cycle finished before 2017), 6 controls.
 2. For each (dong × year, 2017–2024), extract a 64-D AlphaEarth embedding mean over the dong polygon at 10 m scale.
 3. Learn a within-panel drift axis: the mean of `embedding(last 2 yrs) − embedding(first 2 yrs)` across active_panel cases.
