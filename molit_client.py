@@ -56,6 +56,30 @@ F_DONG = "법정동"         # legal-dong name; may carry whitespace
 F_AREA = "전용면적"       # m²
 
 
+def lawd_cd_from_dong_code(dong_code: int | str) -> str:
+    """Return 5-digit MOLIT LAWD_CD from supported legal-dong code formats.
+
+    Supported:
+      - 5-digit gu code:       11200
+      - 8-digit dong code:     11200110
+      - 10-digit 법정동 code:  1120010100
+    """
+    s = str(dong_code).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    if not s.isdigit():
+        raise ValueError(f"dong_code must be numeric-like; got {dong_code!r}")
+
+    if len(s) == 5:
+        return s
+    if len(s) in (8, 10):
+        return s[:5]
+
+    raise ValueError(
+        f"Unsupported dong_code length for MOLIT LAWD_CD extraction: "
+        f"{dong_code!r} -> {s!r}. Expected 5, 8, or 10 digits.")
+
+
 def _check_cases_schema(cases: pd.DataFrame) -> None:
     missing = {"dong_code", "dong_name_kr"} - set(cases.columns)
     if missing:
@@ -169,13 +193,14 @@ def fetch_rent_panel(
     # Group cases by gu (first 5 digits) so dongs in the same gu share API calls.
     gu_to_dongs: dict[str, list[tuple[int, str]]] = {}
     for r in cases.itertuples():
-        lawd_cd = f"{int(r.dong_code) // 100000:05d}"
+        lawd_cd = lawd_cd_from_dong_code(r.dong_code)
         gu_to_dongs.setdefault(lawd_cd, []).append((int(r.dong_code), r.dong_name_kr))
 
     frames: list[pd.DataFrame] = []
     years = list(years)
     print(f"  MOLIT: pulling {len(gu_to_dongs)} gu × {len(years)} yrs × 12 mo "
           f"= {len(gu_to_dongs) * len(years) * 12} calls (cache reused where present)")
+    print("  MOLIT gu codes:", ", ".join(sorted(gu_to_dongs)))
     for lawd_cd in sorted(gu_to_dongs):
         for y in years:
             for m in range(1, 13):
