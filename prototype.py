@@ -12,12 +12,20 @@ Model panel
 -----------
 Each run also assembles a derived per-(dong, year) panel at
 `data/dong_year_model_panel.parquet`, joining case metadata, embeddings,
-their axis projection, wolse, and the `national_redevelopment_intensity_*`
-control. The redev control is a **year-level national** redevelopment
-intensity from MOLIT 통계누리 redev 6189/1 (national annual aggregate); it
-is NOT a gu-level or dong-level announcement-exposure variable, and
-downstream interpretation must keep that distinction. The raw caches
-(`alphaearth_*.parquet`, `wolse_*.parquet`) are read but not mutated.
+their axis projection, wolse, and two MOLIT 통계누리 controls:
+
+  - `national_redevelopment_intensity_*` from redev 6189/1 — a YEAR-LEVEL
+    NATIONAL redevelopment intensity (no geographic dimension). NOT a
+    gu-level or dong-level announcement-exposure variable.
+  - `statnuri_unsold_{mean,max,dec}_units` from unsold 2082/128 — a
+    GU-LEVEL monthly unsold-housing inventory aggregated to annual
+    (mean / max / December snapshot), joined by `lawd_cd × year`. This
+    is a housing-market stress / weak-demand proxy, NOT a wolse_ratio
+    replacement and NOT a tenure signal.
+
+Downstream interpretation must keep both distinctions (national vs. gu,
+demand vs. tenure). The raw caches (`alphaearth_*.parquet`,
+`wolse_*.parquet`) are read but not mutated.
 
 Method
 ------
@@ -63,6 +71,7 @@ POLY_GEOJSON = DATA / "dong_polygons.geojson"
 MOLIT_CACHE_DIR = DATA / "molit_cache"
 MOLIT_RAW_PARQUET = DATA / "molit_rent_raw.parquet"
 REDEV_PANEL_PATH = DATA / "national_redevelopment_intensity.parquet"
+UNSOLD_PANEL_PATH = DATA / "statnuri_unsold_panel.parquet"
 MODEL_PANEL_PATH = DATA / "dong_year_model_panel.parquet"
 
 # Mapping from build_national_redev_panel's column names to the panel-side
@@ -578,14 +587,36 @@ def load_redev_panel() -> pd.DataFrame | None:
     return df
 
 
+def load_unsold_panel() -> pd.DataFrame | None:
+    """Load the cached gu-level StatNuri unsold-housing panel built by
+    `molit_unsold_client.build_seoul_unsold_panel` + `aggregate_to_annual`.
+    Returns None (with a warning) if the parquet is missing — the core
+    LOO does not depend on it, so missing unsold should not abort the
+    run. Rebuild via `molit_unsold_client.fetch_unsold_raw` over the
+    desired YYYYMM range, then the build + aggregate functions in that
+    module."""
+    if not UNSOLD_PANEL_PATH.exists():
+        print(f"  WARNING: {UNSOLD_PANEL_PATH.name} missing — model panel "
+              "will be built without statnuri_unsold_* columns. "
+              "Build with molit_unsold_client.fetch_unsold_raw + "
+              "build_seoul_unsold_panel + aggregate_to_annual.",
+              file=sys.stderr)
+        return None
+    df = pd.read_parquet(UNSOLD_PANEL_PATH)
+    df["year"] = df["year"].astype("int16")
+    df["lawd_cd"] = df["lawd_cd"].astype("string")
+    return df
+
+
 def build_model_panel(cases: pd.DataFrame, emb_df: pd.DataFrame,
                       wolse_df: pd.DataFrame, axis: np.ndarray,
                       redev_panel: pd.DataFrame | None,
+                      unsold_panel: pd.DataFrame | None,
                       embed_mode: str, wolse_source: str) -> pd.DataFrame:
     """Assemble the derived (dong_code, year) model panel.
 
     Columns:
-      dong_code, name_roman, label, year
+      dong_code, name_roman, label, lawd_cd, year
       <whatever wolse columns are present in wolse_df>
       A00..A63 (raw embedding centroids)
       axis_projection (scalar embedding · axis for that row)
@@ -593,17 +624,53 @@ def build_model_panel(cases: pd.DataFrame, emb_df: pd.DataFrame,
                                           for every dong within a year,
                                           which is correct: this is a
                                           NATIONAL control, not local)
+      statnuri_unsold_{mean,max,dec}_units (joined by lawd_cd + year —
+                                           gu-level housing-market stress
+                                           proxy; NOT a tenure signal)
       embed_mode, wolse_source (provenance — auditable from the panel alone)
     """
-    base = (cases[["dong_code", "name_roman", "label"]]
+    from molit_client import lawd_cd_from_dong_code
+    if "lawd_cd" not in cases.columns:
+        raise ValueError(
+            "labeled_cases.csv must carry an explicit `lawd_cd` column "
+            "for gu-level joins. Derive from the `gu` Korean column with "
+            "a canonical Seoul map; do not infer from dong_code (some "
+            "labeled rows have inconsistent dong_code values — see "
+            "Ikseon).")
+    # Surface any case whose CSV-stated lawd_cd differs from the
+    # dong_code-derived value. This is a one-line data-QA note printed
+    # every run so that overrides (currently: Ikseon) stay visible
+    # rather than silently propagating.
+    derived = cases["dong_code"].map(lawd_cd_from_dong_code).astype("string")
+    csv_lawd = cases["lawd_cd"].astype("string")
+    mism = cases[derived.values != csv_lawd.values]
+    if not mism.empty:
+        details = [f"{r.name_roman}: dong_code={r.dong_code} -> "
+                   f"derived {lawd_cd_from_dong_code(r.dong_code)}, "
+                   f"CSV gu={r.gu} -> lawd_cd={r.lawd_cd}"
+                   for r in mism.itertuples()]
+        print(f"  [data-QA] {len(mism)} case(s) override the dong_code-"
+              f"derived gu via the CSV `lawd_cd` column:")
+        for d in details:
+            print(f"    {d}")
+
+    base = (cases[["dong_code", "name_roman", "label", "lawd_cd"]]
             .merge(pd.DataFrame({"year": pd.array(YEARS, dtype="int16")}),
                    how="cross"))
+    base["lawd_cd"] = base["lawd_cd"].astype("string")
     panel = base.merge(wolse_df, on=["dong_code", "year"], how="left")
     panel = panel.merge(emb_df, on=["dong_code", "year"], how="left")
     panel["axis_projection"] = (panel[EMBED_COLS].values @ axis).astype("float32")
     if redev_panel is not None:
         renamed = redev_panel.rename(columns=REDEV_COLUMN_RENAME)
         panel = panel.merge(renamed, on="year", how="left")
+    if unsold_panel is not None:
+        # gu_name from the unsold panel is informational and would shadow
+        # any case-level gu label, so drop it before the merge.
+        keep = ["lawd_cd", "year", "statnuri_unsold_mean_units",
+                "statnuri_unsold_max_units", "statnuri_unsold_dec_units"]
+        panel = panel.merge(unsold_panel[keep], on=["lawd_cd", "year"],
+                            how="left")
     panel["embed_mode"] = embed_mode
     panel["wolse_source"] = wolse_source
     return panel
@@ -698,19 +765,23 @@ def main(argv: list[str] | None = None) -> int:
                             OUT / "projection_scatter.png")
     print(f"\nPlots written:\n  {OUT / 'trajectories.png'}\n  {OUT / 'projection_scatter.png'}")
 
-    # Derived model panel — joined (dong, year) table with national redev control.
+    # Derived model panel — joined (dong, year) table with national redev
+    # control and gu-level StatNuri unsold-housing stress control.
     redev_panel = load_redev_panel()
+    unsold_panel = load_unsold_panel()
     model_panel = build_model_panel(
-        cases, emb_df, wolse_df, axis, redev_panel,
+        cases, emb_df, wolse_df, axis, redev_panel, unsold_panel,
         embed_mode=args.mode, wolse_source=args.wolse_source,
     )
     model_panel.to_parquet(MODEL_PANEL_PATH, index=False)
     n_redev_cols = sum(c.startswith("national_redevelopment_intensity_")
                        for c in model_panel.columns)
+    n_unsold_cols = sum(c.startswith("statnuri_unsold_")
+                        for c in model_panel.columns)
     print(f"Model panel written: {MODEL_PANEL_PATH}  "
           f"rows={len(model_panel)}  cols={len(model_panel.columns)}  "
-          f"redev_cols={n_redev_cols}  embed_mode={args.mode}  "
-          f"wolse_source={args.wolse_source}")
+          f"redev_cols={n_redev_cols}  unsold_cols={n_unsold_cols}  "
+          f"embed_mode={args.mode}  wolse_source={args.wolse_source}")
     return 0
 
 
