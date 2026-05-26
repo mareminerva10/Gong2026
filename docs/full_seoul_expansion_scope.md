@@ -166,7 +166,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
 | Polygon source | data.go.kr 15029173 / NSDI 15145 / VWorld / southkorea/seoul-maps (mirror) | **data.go.kr 15029173** (resolved 2026-05-26, §4) | Resolved |
 | Authoritative dong list | Derived from the chosen polygon source above (`EMD_CD` field) | Follows from polygon-source resolution | Auto-resolves once §4 lands |
-| GCP project for EE | (same as audit module) / new project | TBD | **Yes** — affects quota and billing |
+| GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
 | EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call | No — recommendation pending pilot result |
 | Cache layout | `{geography}_{dong_code}_{year}.parquet` (proposed) / batch parquet | per-call parquet | No |
@@ -176,8 +176,19 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 
 Each `TBD` becomes a one-line follow-up commit when resolved, keeping decisions auditable in git rather than buried in chat.
 
+## 10. Earth Engine project + auth (resolved 2026-05-26)
+
+- **Project**: `gong2026`
+- **Auth mode**: Google Cloud SDK Application Default Credentials (ADC) via `gcloud auth application-default login`. Not the native `earthengine authenticate` flow.
+- **Reason for deviation**: the native EE CLI OAuth client triggered Google's "This app is blocked" verification check on first attempt. Routing through gcloud's pre-verified OAuth client via ADC sidesteps the block without requiring OAuth-consent-screen configuration on the project.
+- **Scope**: `cloud-platform` alone is sufficient for `ee.Initialize(project='gong2026')` and `ImageCollection.first().bandNames().getInfo()` against `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL`. The explicit `earthengine` scope is optional.
+- **ADC quota project**: `v0lare` (gcloud's default at credential-creation time). EE-side billing is routed via the `project=` argument in `ee.Initialize`, so the ADC quota-project mismatch is cosmetic for our case. Can be re-bound to `gong2026` with `gcloud auth application-default set-quota-project gong2026` if needed.
+- **Runtime**: local Python from `.venv`. No service account in the MVP.
+- **Quota policy**: pilot-only EE reductions until the 마포구 + 강남구 acceptance checks in §8 pass. Full-Seoul expansion requires explicit authorization after pilot completion.
+- **Smoke test (2026-05-26)**: `ee.Initialize(project='gong2026')` + a live `bandNames` call on AlphaEarth 2024 returned `['A00']`. Recorded as the gate-resolution evidence.
+
 ## Notes
 
-- This document is intentionally light on code references and heavy on decisions. The pilot module itself does not yet exist; it would live as a new file (`seoul_pilot_extract.py` or similar) that consumes a chosen polygon source and writes to the proposed cache layout.
-- The companion full-Seoul-cost section will be added once §9 row "GCP project for EE" is resolved and a minute-per-polygon-year wall-clock figure exists from a small live test.
-- Do not begin pilot extraction until at least the four bold `TBD`s in §9 are resolved.
+- This document is intentionally light on code references and heavy on decisions. The pilot module itself does not yet exist; it would live as a new file (`seoul_pilot_extract.py` or similar) that consumes the chosen polygon source and writes to the proposed cache layout.
+- The companion full-Seoul-cost section will be added once a minute-per-polygon-year wall-clock figure exists from a small live test.
+- All four bold `TBD`s in the §9 table are now resolved. Pilot polygon-source download and pilot loader are the next concrete code work, gated on §8 acceptance criteria.
