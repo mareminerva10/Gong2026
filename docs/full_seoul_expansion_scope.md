@@ -58,13 +58,13 @@ Primary analytical geography for the pilot and for all downstream rent/housing j
 
 ## 4. Polygon source candidates
 
-**Polygon source status (2026-05-26): provisional primary selected, pending two user-side checks.**
+**Polygon source status (2026-05-26): resolved primary.** Both user-side checks passed — the SHP/ZIP downloads without login, and the KOGL license type permits repo/dashboard use with attribution.
 
 Research outcome:
 
 | Tier | Source | Geography | License | Reproducibility | Vintage | Decision |
 |---|---|---|---|---|---|---|
-| Primary | `data.go.kr` dataset `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national | KOGL (exact type pending check) | Portal navigation, no obvious login wall; SHP bundled as ZIP | Modified 2024-10-30 (recent maintained listing) | **Provisional pick** |
+| Primary | `data.go.kr` dataset `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national | KOGL (confirmed permits repo/dashboard use with attribution) | Portal navigation, no login required (confirmed); SHP bundled as ZIP | Modified 2024-10-30 (recent maintained listing) | **Resolved primary** |
 | Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via different portal |
 | Higher-infra fallback | VWorld `LT_C_ADEMD_INFO` (data layer `30603`) | 법정동, national | API key registration required | API + bulk download | Active | Adds an extra credential flow; defer unless API is needed elsewhere |
 | Emergency prototype-only | `southkorea/seoul-maps` (GitHub) | 법정동, Seoul-only | Apache 2.0 | Excellent (git clone) | 2015 (>10 years stale) | Use only if every official source is blocked; do **not** vendor into repo yet |
@@ -78,10 +78,10 @@ Rationale for the primary pick:
 - Recent maintained public listing (modified 2024-10-30 per the portal entry).
 - The `EMD_CD` 10-digit code is the canonical join key. The existing `labeled_cases.csv` 8-digit `dong_code` is the first 8 digits of this 10-digit code (the trailing 2 digits are 리 identifiers and are `00` for virtually all Seoul urban dongs), so zero-padding gives a clean join key on either side.
 
-**Unresolved before any code lands** (two user-side checks):
+**Resolved 2026-05-26** (both user-side checks passed):
 
-1. Confirm the SHP/ZIP is downloadable without login or special approval.
-2. Confirm the exact KOGL license type (Type 1 / 2 / 3 / 4) permits repo and dashboard use with attribution.
+1. ✓ The SHP/ZIP is downloadable without login or special approval.
+2. ✓ The KOGL license type permits repo and dashboard use with attribution.
 
 CRS handling: the standard distribution ships in EPSG:5179 (UTMK / KGD2002 Unified CS). Earth Engine requires EPSG:4326 (or accepts polygons in any CRS via `ee.Geometry` if the CRS is declared). The pilot extractor must reproject before the `reduceRegion` call. This is a known-solved step; not a TBD. Encoding: raw SHP attribute tables typically use CP949; conversion to UTF-8 at load time is required.
 
@@ -164,7 +164,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
-| Polygon source | data.go.kr 15029173 / NSDI 15145 / VWorld / southkorea/seoul-maps (mirror) | **Provisional: data.go.kr 15029173** (resolved 2026-05-26, §4) | Pending two user-side checks (login / KOGL type) |
+| Polygon source | data.go.kr 15029173 / NSDI 15145 / VWorld / southkorea/seoul-maps (mirror) | **data.go.kr 15029173** (resolved 2026-05-26, §4) | Resolved |
 | Authoritative dong list | Derived from the chosen polygon source above (`EMD_CD` field) | Follows from polygon-source resolution | Auto-resolves once §4 lands |
 | GCP project for EE | (same as audit module) / new project | TBD | **Yes** — affects quota and billing |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
