@@ -58,30 +58,36 @@ Primary analytical geography for the pilot and for all downstream rent/housing j
 
 ## 4. Polygon source candidates
 
-**Polygon source status (2026-05-26): resolved primary.** Both user-side checks passed — the SHP/ZIP downloads without login, and the KOGL license type permits repo/dashboard use with attribution.
+**Polygon source status (2026-05-26): resolved primary, with one correction.**
+
+**Important correction**: `data.go.kr 15029173` is a **표준데이터 / LINK metadata record**, not a direct SHP/ZIP file source. The 15029173 page declares VWorld (`vworld.kr`) as the upstream provider and points users at VWorld's bulk-download interface. The effective primary download target is therefore **VWorld 행정구역_읍면동(법정동) (dsId=30603)**, accessed via the 15029173 LINK record's pointer.
 
 Research outcome:
 
 | Tier | Source | Geography | License | Reproducibility | Vintage | Decision |
 |---|---|---|---|---|---|---|
-| Primary | `data.go.kr` dataset `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national | KOGL (confirmed permits repo/dashboard use with attribution) | Portal navigation, no login required (confirmed); SHP bundled as ZIP | Modified 2024-10-30 (recent maintained listing) | **Resolved primary** |
-| Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via different portal |
-| Higher-infra fallback | VWorld `LT_C_ADEMD_INFO` (data layer `30603`) | 법정동, national | API key registration required | API + bulk download | Active | Adds an extra credential flow; defer unless API is needed elsewhere |
+| Primary (effective file source) | **VWorld 행정구역_읍면동(법정동), dsId=30603** | 법정동, national | KOGL — 이용허락범위 제한 없음 (per the 15029173 LINK record's `이용허락범위` declaration) | VWorld bulk-download interface — Geometry as shape-format separate files; no API key needed for the bulk-file path | Active / maintained | **Resolved primary** |
+| LINK / lineage record (not the file) | `data.go.kr` `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national (LINK record) | KOGL attestation | Metadata page; LINK pointer to VWorld | Modified 2024-10-30 | Lineage / licensing attestation only; not a download target itself |
+| Alternate (official) | `data.go.kr` `15045881` — 국토교통부_일별법정구역정보 → VWorld `dsId=21` | 법정동 + 시군구 + 시도, national | KOGL | VWorld bulk-download with SHP extension | 2024-07-09 listed; daily/monthly updates | **Secondary** — use if dsId=30603 download is retired or temporarily unavailable |
+| Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via a third portal |
+| Higher-infra fallback | VWorld API (`LT_C_ADEMD_INFO`) | 법정동, national | API key registration required | API call flow | Active | Adds an extra credential flow vs. the bulk-file path; defer unless API is needed elsewhere |
 | Emergency prototype-only | `southkorea/seoul-maps` (GitHub) | 법정동, Seoul-only | Apache 2.0 | Excellent (git clone) | 2015 (>10 years stale) | Use only if every official source is blocked; do **not** vendor into repo yet |
 | Rejected | `data.seoul.go.kr/.../10080.do` — 행정구역 법정동 경계 | 법정동, Seoul | Login + 보안각서 (security agreement) | Manual approval flow | Unknown | Fails the reproducibility criterion |
 | Out-of-scope | `data.go.kr` `15125045` — 행정구역시군구_경계_20250522 | **시군구 only** | KOGL | Portal nav | 2025-05-22 (current) | Useful for gu overlays; cannot satisfy the 법정동 requirement |
 
 Rationale for the primary pick:
 
-- National legal-dong geometry source, government-authoritative.
-- SHP / geometry payload, bundled as ZIP — matches the workflow shape we already use for the audit cache.
-- Recent maintained public listing (modified 2024-10-30 per the portal entry).
+- VWorld (`vworld.kr`) is the upstream government-authoritative provider for the 법정구역도 layer that `data.go.kr 15029173` and `data.go.kr 15045881` both LINK to.
+- The dsId=30603 bulk-file path is SHP/Geometry — matches the workflow shape we already use for the audit cache.
+- License attestation is recorded on the 15029173 page as `이용허락범위: 제한 없음` (no usage restrictions), satisfying the repo/dashboard use requirement.
 - The `EMD_CD` 10-digit code is the canonical join key. The existing `labeled_cases.csv` 8-digit `dong_code` is the first 8 digits of this 10-digit code (the trailing 2 digits are 리 identifiers and are `00` for virtually all Seoul urban dongs), so zero-padding gives a clean join key on either side.
 
-**Resolved 2026-05-26** (both user-side checks passed):
+**Resolved 2026-05-26** (both user-side checks passed against the 15029173 LINK attestation):
 
-1. ✓ The SHP/ZIP is downloadable without login or special approval.
-2. ✓ The KOGL license type permits repo and dashboard use with attribution.
+1. ✓ License: 이용허락범위 제한 없음 permits repo/dashboard use with attribution (KOGL-compatible).
+2. ✓ Download path: VWorld dsId=30603 bulk-file download requires no API key for the SHP path.
+
+**Pending verification before loader code lands**: actually pull the SHP/ZIP from VWorld dsId=30603 and inspect the schema. The license/path checks above are based on the 15029173 LINK record's attestation; the on-disk schema confirmation is the next user-side gate.
 
 CRS handling: the standard distribution ships in EPSG:5179 (UTMK / KGD2002 Unified CS). Earth Engine requires EPSG:4326 (or accepts polygons in any CRS via `ee.Geometry` if the CRS is declared). The pilot extractor must reproject before the `reduceRegion` call. This is a known-solved step; not a TBD. Encoding: raw SHP attribute tables typically use CP949; conversion to UTF-8 at load time is required.
 
@@ -164,7 +170,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
-| Polygon source | data.go.kr 15029173 / NSDI 15145 / VWorld / southkorea/seoul-maps (mirror) | **data.go.kr 15029173** (resolved 2026-05-26, §4) | Resolved |
+| Polygon source | VWorld dsId=30603 (file) via data.go.kr 15029173 (LINK) / data.go.kr 15045881 dsId=21 (alternate) / NSDI 15145 (backup) / southkorea/seoul-maps (emergency mirror) | **VWorld dsId=30603 via data.go.kr 15029173 LINK** (resolved 2026-05-26, §4; on-disk schema check still pending) | Resolved (license/path); schema check pending |
 | Authoritative dong list | Derived from the chosen polygon source above (`EMD_CD` field) | Follows from polygon-source resolution | Auto-resolves once §4 lands |
 | GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
