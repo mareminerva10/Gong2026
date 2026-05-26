@@ -1,0 +1,137 @@
+# Dashboard MVP spec — four-block, descriptive, non-forecasting
+
+This is a descriptive four-block housing-pressure dashboard spec, not a supervised gentrification forecasting spec. It captures what the MVP is, what it is not, and what must land before any forecasting layer is even attempted.
+
+All design decisions below are grounded in the project memory tracked under `~/.claude/projects/.../memory/`; the most load-bearing ones are the residualized-axis audit (`project-residualized-axis-audit-2026-05-25`) and the small-N framing (`project-dashboard-framing-small-n-constraints-2026-05-25`).
+
+## 1. Product claim
+
+> **A descriptive Seoul neighborhood dashboard for observed housing-pressure and development-pressure evidence, organized into four blocks with explicit per-block data-status badges. Gentrification is an interpretation layer, not a model output.**
+
+Concretely, the MVP:
+
+- Surfaces observed indicators per Seoul dong (or gu where dong is unavailable), 2017–2024.
+- Organizes those indicators into four evidence blocks (see §3).
+- Marks every block with provenance and status so users can see at a glance which evidence is live, parked, or mocked.
+- Renders only signals whose native grain matches the rendering surface (see §5).
+
+The MVP does **not**:
+
+- Forecast next-year wolse_ratio, gentrification entry, or any other future outcome.
+- Output a single calibrated probability or composite score.
+- Train a supervised model on the current 96-row labeled panel.
+- Treat any AlphaEarth-derived feature as primary signal.
+
+## 2. Non-claims / prohibited claims
+
+The dashboard MUST NOT make any of the following claims, either in UI copy, documentation, or downstream presentations:
+
+1. "Gentrification forecast" / "predicts gentrification" / "displacement risk score".
+2. "Calibrated probability of X" for any X — calibration requires a probabilistic target and a labeled validation set we do not have.
+3. "Validated against ground truth" — the 12-dong labeled set is for case-study QA, not validation.
+4. "PF credit signal" / "credit-scoring input" — see `feedback-pf-spatial-due-diligence`. Spatial due diligence is the framing, not credit scoring.
+5. "Composite housing-pressure score" rendered as a single number — keep blocks separated; if a top-level triage flag is needed, it is a transparent rule (e.g., "block-2 anomaly AND block-4 high-pressure") with the rule visible.
+6. "AlphaEarth gentrification axis" — explicitly rejected by the 2026-05-25 residualization audit.
+7. Rendering a national-only variable on a per-dong map fill — see §5.
+
+## 3. Four evidence blocks
+
+| # | Block | What it shows | Native grain |
+|---|---|---|---|
+| 1 | Tenure pressure | wolse/jeonse split, deposit/m², monthly rent/m² | gu or dong × month (when tenure source lands) |
+| 2 | Physical change | AlphaEarth drift / anomaly, NOT the rejected 1-D axis | dong × year |
+| 3 | Vulnerability | demographic / socioeconomic indicators | not yet scoped |
+| 4 | Development pressure | redevelopment intensity + housing-market stress (supply-side + demand-side) | mixed; see §4 |
+
+Block 4 deliberately contains both supply-side (redev intensity) and demand-side (unsold) signals because they are joint diagnostics of housing-market dynamics. They are presented as sub-rows within the block, with their own grain and status.
+
+## 4. Current data status by block
+
+| Block | Variable(s) | Source | Grain | Status (2026-05-26) |
+|---|---|---|---|---|
+| 1 Tenure pressure | `wolse_ratio`, `n_wolse`, `n_jeonse`, `median_deposit_per_m2`, `median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` OR StatNuri tenure-split form | gu × month (target) | **PARKED** — see [B1] |
+| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs only**; full-Seoul expansion gated on [B4][B5] |
+| 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
+| 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
+| 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |
+| 4c Spatial development companion | permits, completions, 정비구역 GIS, local redevelopment exposure | TBD | gu or dong × year | **NOT SCOPED** — see [B3] |
+
+## 5. Grain-mismatch and map-rendering rules
+
+A signal's native grain dictates where and how it may be rendered:
+
+- **Per-dong map fill**: only signals at dong × year native grain.
+  - Allowed: Block 2 (AlphaEarth, where available).
+  - Disallowed: Blocks 4a, 4b. Rendering 4b at dong fill is acceptable only if explicitly labeled "gu-level broadcast" with all dongs in a gu colored uniformly.
+- **Per-gu map fill**: signals at gu × month/year native grain.
+  - Allowed: Block 4b. Block 1 (when available).
+  - Disallowed: Block 4a — rendering a single national value as a 25-gu choropleth implies spatial variation that does not exist.
+- **National-level annotation/temporal axis**: Block 4a only.
+  - Render as a single year-axis trend line or a uniform legend annotation. Not as a map fill, not as a per-region color.
+- **Parked blocks** (1, 3, 4c at present): render an explicit "data parked / not yet integrated" badge with the relevant blocker ID from §9. Do not zero-fill, do not interpolate, do not render an empty map as if it were a zero value.
+
+## 6. Provenance / status columns (panel-level)
+
+Following the established pattern (`embed_mode`, `wolse_source` already on every model-panel row), every panel row should carry the following block-level provenance fields. These are spec-only here; concrete population is a future code task in a separate commit.
+
+Per-row fields, by block:
+
+- `physical_source` — e.g. `alphaearth_ee`, `synth`
+- `physical_grain` — e.g. `dong-year`
+- `physical_artifact_policy` — one of `{residualized_tokyo_taipei, drop_2022, flag_2022}` (see §7)
+- `tenure_source` — `data_go_kr_rtms`, `statnuri_<form>`, `synth`, `parked`
+- `tenure_grain` — `gu-month`, `dong-month`, `parked`
+- `tenure_status` — `live`, `mock`, `parked`
+- `housing_stress_source` — `statnuri_2082_128`, `parked`
+- `housing_stress_grain` — `gu-year`
+- `housing_stress_status` — `live`
+- `development_pressure_source` — `statnuri_6189_1`
+- `development_pressure_grain` — `national-year`
+- `development_pressure_status` — `live`
+- `development_pressure_spatial_variation` — `none`, `gu`, `dong` (currently `none`)
+
+When code lands, these should be string-valued columns so they survive merges and round-trip through parquet without dtype acrobatics. They are deliberately not enums.
+
+## 7. AlphaEarth 2022 artifact policy
+
+All Block 2 metrics inherit the 2021→2022 regional common-mode shift documented in `project-2022-artifact-audit-findings` (full N=30: 2022 hot in Seoul + Osaka, clean in Tokyo + Taipei). Drift magnitude, angular change, and local-anomaly metrics all inherit this contamination, not only the rejected 1-D axis.
+
+**MVP default policy: flag.** Any AlphaEarth-derived value computed across a 2021→2022 transition (or its derivative across that window) must be rendered with a visible 2022-artifact flag in the UI and in any exported tables.
+
+Two stricter alternatives are available and selectable per deployment:
+
+- **Residualize**: subtract cumulative Tokyo/Taipei anchor drift from each Seoul row before computing the metric. Infrastructure cached under `data/audit_cache/` (60 polygons × 8 years) and implemented in `axis_residualize.py`.
+- **Drop**: omit 2022 from the panel entirely. Loses one of eight years.
+
+The `physical_artifact_policy` provenance field records which policy is active.
+
+## 8. Small-N constraints (binding)
+
+The current labeled panel has 12 dongs × 8 years = 96 rows, with 2 active_panel, 4 post_peak, 6 controls. Against ~83 model columns this is insufficient for: supervised forecasting, boosted trees / random forests, gu fixed effects, calibration, feature-selection sweeps, multi-feature model comparison.
+
+The 96-row labeled panel is appropriate for: case-study QA, false-positive audits, rank audits, negative-result documentation, qualitative dashboard example tiles.
+
+The **descriptive layer of the dashboard is independent of label count** — it runs over the full Seoul dong/gu universe with no supervised step. The labeled set is used only as worked-example tiles and as a QA harness, not as training data.
+
+### Pilot expansion (Block 2 / full-Seoul)
+
+Before expanding AlphaEarth coverage to all ~424 Seoul dongs, the MVP requires a pilot. The pilot is **complete-gu coverage of 마포구 and 강남구**, not 25 arbitrary dongs.
+
+- 마포구 contains known gentrification-relevant neighborhoods (Yeonnam, Mangwon) and tests within-gu heterogeneity.
+- 강남구 is a high-price comparison gu with a different mechanism profile (Apgujeong, Daechi).
+
+Use the final chosen dong geography end-to-end (either 법정동 or 행정동, **not mixed**). The pilot exists to test polygon sourcing, metadata joins, EE reduction cost, cache layout, within-gu variance, and the 2022 artifact handling before any all-Seoul attempt. Accept slightly above 25 dongs if a complete gu requires it; completeness beats hitting a target count.
+
+## 9. Open blockers
+
+| ID | Blocker | Type | Resolves |
+|---|---|---|---|
+| B1 | 전월세 source not settled — data.go.kr key absent, no validated StatNuri tenure form yet | USER-SIDE | Block 1 unparked |
+| B2 | Vulnerability block has no source candidate | PROJECT-SCOPING | Block 3 unparked |
+| B3 | No spatial companion for Block 4 (permits / completions / 정비구역 GIS not yet sourced) | PROJECT-SCOPING | Block 4 gains spatial development variance |
+| B4 | Full-Seoul polygon source not selected (NSDI/SGIS) — 1km centroid boxes inadequate | PROJECT-SCOPING | Pilot can begin; full-Seoul expansion can be scoped |
+| B5 | Earth Engine reduction cost not estimated; ~3,392 polygon-year reductions implied at full Seoul | PROJECT-SCOPING | Pilot must run first to estimate |
+
+Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 + B5 are gating for the Block 2 pilot. B2 is independent and lowest-priority for the MVP.
+
+The MVP can ship descriptively with Blocks 4a + 4b live and Blocks 1, 2, 3, 4c marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.
