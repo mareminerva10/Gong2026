@@ -58,20 +58,38 @@ Primary analytical geography for the pilot and for all downstream rent/housing j
 
 ## 4. Polygon source candidates
 
-Each candidate has different licensing, update cadence, projection, and authoritativeness. Document the choice before downloading.
+**Polygon source status (2026-05-26): provisional primary selected, pending two user-side checks.**
 
-| Candidate | Format | Geography support | Update cadence | License | Notes |
-|---|---|---|---|---|---|
-| NSDI (`nsdi.go.kr` / 국가공간정보포털) | SHP, GeoJSON | 법정동, 행정동, 시군구 | Annual or on-demand | Government open | Default reference for administrative boundaries; large bundles |
-| SGIS (`sgis.kostat.go.kr`) | SHP / API | 법정동, 행정동, 통계지구 | Aligned with census cycles | KOSIS open | Statistical-lineage; matches KOSIS demographic joins downstream |
-| 서울 열린데이터광장 (`data.seoul.go.kr`) | SHP, GeoJSON, API | 행정동 (primarily) | Periodic | Seoul-specific open | Smaller scope, faster to download; not nationally consistent |
-| MOIS 법정동 코드 (no geometry, code table only) | CSV | 법정동 code reference | Quarterly | Government open | Code-table-only; pair with a geometry source above |
+Research outcome:
 
-A typical workflow is **MOIS code table + NSDI or SGIS geometries**, joined by code.
+| Tier | Source | Geography | License | Reproducibility | Vintage | Decision |
+|---|---|---|---|---|---|---|
+| Primary | `data.go.kr` dataset `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national | KOGL (exact type pending check) | Portal navigation, no obvious login wall; SHP bundled as ZIP | Modified 2024-10-30 (recent maintained listing) | **Provisional pick** |
+| Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via different portal |
+| Higher-infra fallback | VWorld `LT_C_ADEMD_INFO` (data layer `30603`) | 법정동, national | API key registration required | API + bulk download | Active | Adds an extra credential flow; defer unless API is needed elsewhere |
+| Emergency prototype-only | `southkorea/seoul-maps` (GitHub) | 법정동, Seoul-only | Apache 2.0 | Excellent (git clone) | 2015 (>10 years stale) | Use only if every official source is blocked; do **not** vendor into repo yet |
+| Rejected | `data.seoul.go.kr/.../10080.do` — 행정구역 법정동 경계 | 법정동, Seoul | Login + 보안각서 (security agreement) | Manual approval flow | Unknown | Fails the reproducibility criterion |
+| Out-of-scope | `data.go.kr` `15125045` — 행정구역시군구_경계_20250522 | **시군구 only** | KOGL | Portal nav | 2025-05-22 (current) | Useful for gu overlays; cannot satisfy the 법정동 requirement |
 
-**Pilot default proposed**: `TBD`. Resolution requires committing to §3 first (geometry layer follows from geography choice).
+Rationale for the primary pick:
 
-CRS handling: all candidates ship in EPSG:5179 (Korea TM) or similar projected CRS. Earth Engine requires EPSG:4326 (or accepts polygons in any CRS via `ee.Geometry` if the CRS is declared). The pilot extractor must reproject before the `reduceRegion` call. This is a known-solved step; not a TBD.
+- National legal-dong geometry source, government-authoritative.
+- SHP / geometry payload, bundled as ZIP — matches the workflow shape we already use for the audit cache.
+- Recent maintained public listing (modified 2024-10-30 per the portal entry).
+- The `EMD_CD` 10-digit code is the canonical join key. The existing `labeled_cases.csv` 8-digit `dong_code` is the first 8 digits of this 10-digit code (the trailing 2 digits are 리 identifiers and are `00` for virtually all Seoul urban dongs), so zero-padding gives a clean join key on either side.
+
+**Unresolved before any code lands** (two user-side checks):
+
+1. Confirm the SHP/ZIP is downloadable without login or special approval.
+2. Confirm the exact KOGL license type (Type 1 / 2 / 3 / 4) permits repo and dashboard use with attribution.
+
+CRS handling: the standard distribution ships in EPSG:5179 (UTMK / KGD2002 Unified CS). Earth Engine requires EPSG:4326 (or accepts polygons in any CRS via `ee.Geometry` if the CRS is declared). The pilot extractor must reproject before the `reduceRegion` call. This is a known-solved step; not a TBD. Encoding: raw SHP attribute tables typically use CP949; conversion to UTF-8 at load time is required.
+
+Field expectations (standard `전국법정구역` schema):
+
+- `EMD_CD` — 10-digit 법정동 code (join key; zero-pad the existing 8-digit `dong_code` to match)
+- `EMD_KOR_NM` — Korean dong name
+- Geometry — Polygon / MultiPolygon
 
 ## 5. Join keys and metadata requirements
 
@@ -146,8 +164,8 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
-| Polygon source | NSDI / SGIS / 서울 열린데이터광장 / MOIS+geometry | TBD | **Yes** — next gate |
-| Authoritative dong list | NSDI / SGIS / MOIS 법정동 코드 표 / `labeled_cases.csv` (insufficient) | TBD | **Yes** — drives universe count and §8 (1) |
+| Polygon source | data.go.kr 15029173 / NSDI 15145 / VWorld / southkorea/seoul-maps (mirror) | **Provisional: data.go.kr 15029173** (resolved 2026-05-26, §4) | Pending two user-side checks (login / KOGL type) |
+| Authoritative dong list | Derived from the chosen polygon source above (`EMD_CD` field) | Follows from polygon-source resolution | Auto-resolves once §4 lands |
 | GCP project for EE | (same as audit module) / new project | TBD | **Yes** — affects quota and billing |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
 | EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call | No — recommendation pending pilot result |
