@@ -44,9 +44,17 @@ Pick **one** for the pilot and for all subsequent expansion. Mixing produces unj
 - **Pro**: matches actual local-government service areas; matches KOSIS population and household tables more naturally; better resolution for the eventual Block 3 vulnerability layer.
 - **Con**: 행정동 boundaries change more frequently (occasional merges/splits); MOLIT transaction data is 법정동-keyed, so Block 1 joins would need a `법정동→행정동` crosswalk; the labeled cases would need re-coding.
 
-**Default proposed for the pilot**: `TBD` — the spec explicitly does not pick. Decide before any EE call.
+**Resolved 2026-05-26: 법정동.**
 
-The current labeled set, the unsold panel, and the MOLIT transaction client all assume **법정동** today. Switching to 행정동 is a larger refactor than picking 법정동 now and adding a crosswalk later if Block 3 demands it.
+Primary analytical geography for the pilot and for all downstream rent/housing joins is **법정동**. Reasons:
+
+1. Existing case IDs in `labeled_cases.csv` are already 법정동-style 8-digit codes.
+2. MOLIT/data.go.kr rent transactions (`RTMSDataSvcAptRent`) use legal-dong / LAWD geography natively.
+3. StatNuri gu joins (unsold panel) use `lawd_cd`, which aligns with the 법정동 hierarchy.
+4. Gentrification case narratives in the literature (`익선동`, `성수동1가`, `망원동`, `연남동`, `압구정동`) are expressed as 법정동 / neighborhood names, not 행정동 service areas.
+5. 법정동 boundaries are more stable across years than 행정동, which can be reorganized for administrative reasons; longitudinal analysis benefits from the stability.
+
+**Caveat — do not mix units.** Some public vulnerability and demographic indicators are published at 행정동 grain. The dashboard may later add a 법정동↔행정동 crosswalk for the Block 3 vulnerability layer, but the AlphaEarth pilot, the rent/housing joins, and the model panel **must not mix** units. Mixed-grain joins are explicitly prohibited (see `docs/dashboard_mvp_spec.md` §8).
 
 ## 4. Polygon source candidates
 
@@ -137,8 +145,8 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
-| Dong geography | 법정동 / 행정동 | TBD | **Yes** |
-| Polygon source | NSDI / SGIS / 서울 열린데이터광장 / MOIS+geometry | TBD | **Yes** |
+| Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
+| Polygon source | NSDI / SGIS / 서울 열린데이터광장 / MOIS+geometry | TBD | **Yes** — next gate |
 | Authoritative dong list | NSDI / SGIS / MOIS 법정동 코드 표 / `labeled_cases.csv` (insufficient) | TBD | **Yes** — drives universe count and §8 (1) |
 | GCP project for EE | (same as audit module) / new project | TBD | **Yes** — affects quota and billing |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
