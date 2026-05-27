@@ -58,17 +58,19 @@ Primary analytical geography for the pilot and for all downstream rent/housing j
 
 ## 4. Polygon source candidates
 
-**Polygon source status (2026-05-26): resolved primary, with one correction.**
+**Polygon source status (2026-05-27): on-disk schema confirmed; primary source revised.**
 
-**Important correction**: `data.go.kr 15029173` is a **표준데이터 / LINK metadata record**, not a direct SHP/ZIP file source. The 15029173 page declares VWorld (`vworld.kr`) as the upstream provider and points users at VWorld's bulk-download interface. The effective primary download target is therefore **VWorld 행정구역_읍면동(법정동) (dsId=30603)**, accessed via the 15029173 LINK record's pointer.
+The actually-available official file family is the **NSDI D001 monthly AL EMD snapshot series** distributed through `data.go.kr 15045881` / VWorld `dsId=21` (국토교통부 일별 법정구역 정보) — not the static `dsId=30603` bulk-file we previously thought was primary. The user has six months of monthly snapshots (Dec 2025 – May 2026) plus the prior half-year on disk. The pilot pins to **`AL_D001_00_20251204(EMD)`** as the working snapshot.
+
+The earlier `data.go.kr 15029173` LINK record remains useful as license/lineage attestation but is reclassified to a secondary tier.
 
 Research outcome:
 
 | Tier | Source | Geography | License | Reproducibility | Vintage | Decision |
 |---|---|---|---|---|---|---|
-| Primary (effective file source) | **VWorld 행정구역_읍면동(법정동), dsId=30603** | 법정동, national | KOGL — 이용허락범위 제한 없음 (per the 15029173 LINK record's `이용허락범위` declaration) | VWorld bulk-download interface — Geometry as shape-format separate files; no API key needed for the bulk-file path | Active / maintained | **Resolved primary** |
-| LINK / lineage record (not the file) | `data.go.kr` `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national (LINK record) | KOGL attestation | Metadata page; LINK pointer to VWorld | Modified 2024-10-30 | Lineage / licensing attestation only; not a download target itself |
-| Alternate (official) | `data.go.kr` `15045881` — 국토교통부_일별법정구역정보 → VWorld `dsId=21` | 법정동 + 시군구 + 시도, national | KOGL | VWorld bulk-download with SHP extension | 2024-07-09 listed; daily/monthly updates | **Secondary** — use if dsId=30603 download is retired or temporarily unavailable |
+| **Primary (working file source)** | **NSDI D001 monthly AL EMD snapshot via `data.go.kr 15045881` / VWorld `dsId=21`** | 법정동 (8-digit A1), national | KOGL — 이용허락범위 제한 없음 (per 15029173 attestation) | Monthly + daily distribution; user has 12 monthly snapshots on disk | Pinned snapshot: **`AL_D001_00_20251204(EMD)`** | **Resolved (on-disk schema confirmed 2026-05-27)** |
+| Documented bulk-file alternate | VWorld 행정구역_읍면동(법정동), `dsId=30603` | 법정동, national | KOGL | VWorld bulk-download interface | Active | Use if D001 family becomes unavailable |
+| LINK / lineage attestation | `data.go.kr` `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national (LINK record) | KOGL attestation | Metadata page; LINK to VWorld | Modified 2024-10-30 | License/lineage record; not a download target |
 | Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via a third portal |
 | Higher-infra fallback | VWorld API (`LT_C_ADEMD_INFO`) | 법정동, national | API key registration required | API call flow | Active | Adds an extra credential flow vs. the bulk-file path; defer unless API is needed elsewhere |
 | Emergency prototype-only | `southkorea/seoul-maps` (GitHub) | 법정동, Seoul-only | Apache 2.0 | Excellent (git clone) | 2015 (>10 years stale) | Use only if every official source is blocked; do **not** vendor into repo yet |
@@ -77,39 +79,70 @@ Research outcome:
 
 Rationale for the primary pick:
 
-- VWorld (`vworld.kr`) is the upstream government-authoritative provider for the 법정구역도 layer that `data.go.kr 15029173` and `data.go.kr 15045881` both LINK to.
-- The dsId=30603 bulk-file path is SHP/Geometry — matches the workflow shape we already use for the audit cache.
-- License attestation is recorded on the 15029173 page as `이용허락범위: 제한 없음` (no usage restrictions), satisfying the repo/dashboard use requirement.
-- The `EMD_CD` 10-digit code is the canonical join key. The existing `labeled_cases.csv` 8-digit `dong_code` is the first 8 digits of this 10-digit code (the trailing 2 digits are 리 identifiers and are `00` for virtually all Seoul urban dongs), so zero-padding gives a clean join key on either side.
+- D001 EMD is the actually-distributed monthly+daily official feed for legal-dong polygons.
+- The user has 12 monthly snapshots on disk (Jun 2025 – May 2026), so the file lookup is fully reproducible without any further portal navigation.
+- Pinning to a single monthly snapshot (`AL_D001_00_20251204(EMD)`) gives a stable boundary state across the panel; daily CH delta files exist for future date-specific reconstruction but are **not used for the MVP pilot**.
+- License attestation on the 15029173 LINK page (`이용허락범위: 제한 없음`) covers the same data source — KOGL-compatible for repo/dashboard use.
 
-**Resolved 2026-05-26** (both user-side checks passed against the 15029173 LINK attestation):
+### On-disk schema confirmation (2026-05-27)
 
-1. ✓ License: 이용허락범위 제한 없음 permits repo/dashboard use with attribution (KOGL-compatible).
-2. ✓ Download path: VWorld dsId=30603 bulk-file download requires no API key for the SHP path.
+Inspected `AL_D001_00_20260509(EMD)` (the most recent monthly snapshot — schema is consistent across the D001 series). Findings:
 
-**Pending verification before loader code lands**: actually pull the SHP/ZIP from VWorld dsId=30603 and inspect the schema. The license/path checks above are based on the 15029173 LINK record's attestation; the on-disk schema confirmation is the next user-side gate.
+- **Features**: 5,369 polygons nationwide
+- **Geometry type**: Polygon
+- **CRS**: **EPSG:5186** (Korea 2000 Central Belt 2010, per `.prj`) — must reproject to EPSG:4326 before any `ee.Geometry` construction
+- **Attribute encoding**: **CP949** (verified — Korean dong names read cleanly)
+- **Attribute schema** (5 fields):
 
-CRS handling: the standard distribution ships in EPSG:5179 (UTMK / KGD2002 Unified CS). Earth Engine requires EPSG:4326 (or accepts polygons in any CRS via `ee.Geometry` if the CRS is declared). The pilot extractor must reproject before the `reduceRegion` call. This is a known-solved step; not a TBD. Encoding: raw SHP attribute tables typically use CP949; conversion to UTF-8 at load time is required.
+  | Field | Type | Mapped name | Description |
+  |---|---|---|---|
+  | `A0` | int32 | `_row_id` | internal feature id |
+  | `A1` | str | `emd_cd` | **8-digit 법정동 code (canonical join key)** |
+  | `A2` | str | `dong_name_kr` | Korean dong name |
+  | `A3` | date | `effective_date` | snapshot effective date |
+  | `A4` | str | `lawd_cd` | 5-digit 시군구 code |
 
-Field expectations (standard `전국법정구역` schema):
+- **Seoul rows** (`A4` in 25 Seoul gus): 467
+- **Pilot rows**: 26 in 마포구 (`A4=11440`), 14 in 강남구 (`A4=11680`) → **40 dongs × 8 years = ~320 EE calls** at pilot scale
 
-- `EMD_CD` — 10-digit 법정동 code (join key; zero-pad the existing 8-digit `dong_code` to match)
-- `EMD_KOR_NM` — Korean dong name
-- Geometry — Polygon / MultiPolygon
+### Earlier 10-digit EMD_CD expectation was wrong
+
+The earlier docs said `EMD_CD` would be a 10-digit code and the existing 8-digit `dong_code` would need zero-padding. The D001 EMD feed instead carries the canonical key directly as the 8-digit `A1`, which is the **same shape** as the existing `labeled_cases.csv.dong_code`. No padding step is needed.
+
+### Crosswalk finding — `labeled_cases.csv.dong_code` is unreliable for all 12 cases
+
+When all 12 labeled cases are crosswalked against the canonical `A1` by `(A2 Korean name, A4 lawd_cd)`, **every single CSV `dong_code` disagrees with `A1`**. The first-5-digit `lawd_cd` matches in 11 of 12 cases (Ikseon being the prior-known exception), but the last 3 digits diverge systematically — consistent with the CSV `dong_code` field carrying **행정동 (administrative-dong)** numbering while `dong_name_kr` carries **법정동 (legal-dong)** names. Examples:
+
+  - `Yeonnam`: CSV 11440710 → A1 11440124
+  - `Mangwon`: CSV 11440730 → A1 11440123
+  - `Apgujeong`: CSV 11680105 → A1 11680110
+  - `Daechi`: CSV 11680117 → A1 11680106
+  - `Ikseon`: CSV 11305680 → A1 11110133 (also the only `lawd_cd` mismatch)
+
+**Implications for the loader and CSV repair:**
+
+- The loader must crosswalk by `(dong_name_kr, lawd_cd)` against `A1`, **not** by `dong_code`. Trusting `dong_code` would fail to resolve any case.
+- The eventual CSV repair commit affects **12 rows, not 1**. The existing `[data-QA]` Ikseon-only print is too narrow; once the loader can produce the canonical `A1` lookup, every CSV row needs to be reconciled and the repair must be reported, not memorized.
+- The existing `lawd_cd` column on `labeled_cases.csv` is correct for 11 of 12 cases (Ikseon's was already fixed); only the `dong_code` column is structurally wrong.
+
+### CH daily deltas — out of scope for MVP
+
+The D001 distribution also ships daily CH delta files (`CH_D001_00_YYYYMMDD.zip`) for date-specific boundary reconstruction. These are not used for the MVP pilot. The pilot pins to one monthly AL snapshot and ignores all CH files.
+
+CRS and encoding handling are now anchored to the on-disk inspection above: EPSG:5186 source CRS (reproject to EPSG:4326 before `ee.Geometry`), CP949 attribute encoding (decode to UTF-8 at load time). The earlier "standard `전국법정구역` schema" expectation (EMD_CD / EMD_KOR_NM, 10-digit) does not apply to this feed; the D001 series uses A0..A4 as documented in the on-disk schema confirmation.
 
 ## 5. Join keys and metadata requirements
 
 For each pilot polygon row, the loader must emit:
 
-- `dong_code` — full code (8 or 10 digits depending on geography choice). Must round-trip through `lawd_cd_from_dong_code` to the correct `lawd_cd` (5-digit gu code) for the gu it belongs to.
-- `dong_name_kr` — Korean dong name (matches the MOLIT 법정동 field when Block 1 unparks).
-- `name_roman` — optional but consistent with `labeled_cases.csv` for the four overlapping cases.
-- `gu` — Korean gu name (matches `labeled_cases.csv` and the unsold panel).
-- `lawd_cd` — derived. Must agree with `gu` per the existing data-QA validation in `prototype.build_model_panel`.
-- `lat`, `lon` — polygon centroid in EPSG:4326. Required for any downstream visualization and as a fallback for cases where polygon ops fail.
+- `emd_cd` — canonical 8-digit 법정동 code from `A1`. This is the join key. **Do not derive it from `labeled_cases.csv.dong_code`** — that field is 행정동-numbered and disagrees with `A1` for every labeled case.
+- `dong_name_kr` — Korean dong name from `A2`.
+- `lawd_cd` — 5-digit 시군구 code from `A4`. Used for filtering to 마포구 (11440) and 강남구 (11680).
+- `effective_date` — snapshot effective date from `A3`. Recorded for provenance.
+- `lat`, `lon` — polygon centroid in EPSG:4326. Computed at load time; required for any downstream visualization.
 - `geometry` — polygon in EPSG:4326. Required by EE.
 
-The existing data-QA print (`[data-QA] N case(s) override the dong_code-derived gu via the CSV lawd_cd column`) should also fire for pilot polygons whose derived gu disagrees with the polygon-source gu. Surface, do not silently re-key.
+**Labeled-case crosswalk rule** (peer-driven): when reconciling pilot polygons against `labeled_cases.csv`, key on `(dong_name_kr, lawd_cd)` against `(A2, A4)`. Surface any case whose CSV `dong_code` disagrees with the matched `A1` via a `[data-QA]` print. The existing Ikseon-only override print should be widened to report all such mismatches (currently 12 of 12 labeled cases mismatch).
 
 ## 6. Earth Engine call-count and cache plan
 
@@ -170,8 +203,8 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
-| Polygon source | VWorld dsId=30603 (file) via data.go.kr 15029173 (LINK) / data.go.kr 15045881 dsId=21 (alternate) / NSDI 15145 (backup) / southkorea/seoul-maps (emergency mirror) | **VWorld dsId=30603 via data.go.kr 15029173 LINK** (resolved 2026-05-26, §4; on-disk schema check still pending) | Resolved (license/path); schema check pending |
-| Authoritative dong list | Derived from the chosen polygon source above (`EMD_CD` field) | Follows from polygon-source resolution | Auto-resolves once §4 lands |
+| Polygon source | D001 monthly AL EMD (data.go.kr 15045881 / VWorld dsId=21) / dsId=30603 bulk-file alternate / NSDI 15145 backup / southkorea/seoul-maps emergency mirror | **D001 monthly AL EMD, pinned to `AL_D001_00_20251204(EMD)`** (resolved 2026-05-27, §4; on-disk schema confirmed) | Resolved |
+| Authoritative dong list | Derived from the chosen polygon source above (`A1` 8-digit code) | A1 field of D001 AL EMD | Resolved |
 | GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
 | EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call | No — recommendation pending pilot result |
