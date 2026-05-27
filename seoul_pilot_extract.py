@@ -232,7 +232,14 @@ def fetch_embeddings(
             print(f"  ! no embedding {emd_cd} {row.dong_name_kr} {year}", file=sys.stderr)
             continue
         rec = record_from(row, year, vec)
-        pd.DataFrame([rec]).to_parquet(cache, index=False)
+        # Atomic write: parquet → .tmp → rename. Path.replace is atomic on
+        # POSIX and Windows, so a SIGKILL mid-flush can leave a .tmp file
+        # behind but cannot leave a truncated .parquet that the next run's
+        # `cache.exists()` check would accept as cached.
+        # See docs/full_seoul_expansion_scope.md §8 caveat #3.
+        tmp = cache.with_suffix(".tmp")
+        pd.DataFrame([rec]).to_parquet(tmp, index=False)
+        tmp.replace(cache)
         rows.append(rec)
         pulled += 1
         if pulled % 10 == 0:
