@@ -229,6 +229,21 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 - **Overlap cases present**: pass — Yeonnam, Mangwon, Apgujeong, and Daechi all appear in the pilot.
 - **Overlap comparison against legacy 12-dong EE panel**: run against `C:\Users\marem\PycharmProjects\Gong2026\data\alphaearth_ee.parquet`. The legacy panel used 1km proxy boxes and old pre-repair dong codes, so exact equality is not a valid criterion; the QA script maps the four overlap cases through the old-code map and reports deltas as diagnostic evidence. Results: Yeonnam max_abs_delta 0.043985 / median_l2_delta 0.136234; Mangwon 0.100842 / 0.310735; Apgujeong 0.152492 / 0.496147; Daechi 0.062134 / 0.191677. Non-zero deltas are expected from the geometry upgrade and should be documented, not treated as a blocker.
 
+### Pilot QA re-verification (2026-05-27, post-caveat fixes)
+
+After the §8 audit-trail fixes for #1, #3, #4a, and #7 landed (see "§8 audit-trail caveats" below), `seoul_pilot_qa.py --source-shp <D001 EMD ZIP>` was re-run against a freshly-extracted 320-row pilot panel produced by `seoul_pilot_extract.py --gcp-project gong2026`. **All hard-fail gates pass; exit 0.**
+
+- Completeness: 320/320 rows, 40 dongs (26 마포구 + 14 강남구), 0 duplicates, 0 missing embed cells.
+- Within-gu variance: min std-vector norm 0.233323 (median 0.254345).
+- **§8 #1 source-SHP completeness**: 40 source dongs = 40 panel dongs, 0 missing, 0 extra.
+- **§8 #4a lawd_cd ↔ gu_name consistency**: 320 rows, 0 mismatches, 0 unknown lawd_cd.
+- 2021–2022 artifact reproduction: 95.0% overall share-max, 마포구 100.0%, 강남구 85.7%, angular ratio 1.560 — bit-identical to the peer's earlier run.
+- Overlap presence: 4/4. Legacy-proxy-box deltas bit-identical to the peer's earlier run (Yeonnam max_abs 0.043985 / L2 0.136234; Mangwon 0.100842 / 0.310735; Apgujeong 0.152492 / 0.496147; Daechi 0.062134 / 0.191677). This is meaningful: same polygons + same code + same EE backend reproduce the same embedding centroids deterministically across two independent extractions.
+
+Extraction cost evidence (§8 #7, populated by this run): 320 rows in `data/seoul_pilot_cost_log.csv`. Full-pilot wall 314.7 s @ 0.98 s/target-row mixed; per-fresh mean 0.81 s (median 0.66, max 3.17). Extrapolated full-Seoul (~3,400 calls) at this rate: ~46–56 min wall depending on init overhead.
+
+Atomic cache write (§8 #3) exercised implicitly across all 320 fresh pulls — no corrupted parquets observed; resume semantics unchanged. QA report JSON is regenerable from `seoul_pilot_qa.py` and remains gitignored under `data/*`.
+
 ### §8 audit-trail caveats (2026-05-27)
 
 Three §8 acceptance gates were not closed as written. The pilot science is sound (see Pilot QA status above); these are engineering / audit-trail observations recorded here so the full-Seoul authorization remains honest.
