@@ -59,8 +59,9 @@ Non-fatal (printed as `[data-QA]` warnings, manifest still writes):
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
-import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -131,14 +132,21 @@ def _resolve_shp_path(input_path: Path, temp_dir: Path) -> Path:
             f"unsupported input type: {input_path} "
             "(expected .zip, .shp, or directory)")
 
+    def extract_flat(zf: zipfile.ZipFile, member: str, dest: Path) -> Path:
+        target = dest / Path(member).name
+        target.write_bytes(zf.read(member))
+        return target
+
     with zipfile.ZipFile(input_path) as zf:
         names = zf.namelist()
         # Case 1: inner ZIP holds the SHP family directly
         shp_names = [n for n in names
                      if n.lower().endswith(".shp") and "emd" in n.lower()]
         if shp_names:
-            zf.extractall(temp_dir)
-            return temp_dir / shp_names[0]
+            for name in names:
+                if not name.endswith("/"):
+                    extract_flat(zf, name, temp_dir)
+            return temp_dir / Path(shp_names[0]).name
         # Case 2: outer ZIP contains nested EMD ZIP
         nested = [n for n in names
                   if n.lower().endswith(".zip") and "emd" in n.lower()]
@@ -146,10 +154,11 @@ def _resolve_shp_path(input_path: Path, temp_dir: Path) -> Path:
             raise FileNotFoundError(
                 f"no EMD .shp or nested EMD .zip inside {input_path}; "
                 f"got first entries: {names[:5]}")
-        zf.extract(nested[0], temp_dir)
-        inner_zip = temp_dir / nested[0]
+        inner_zip = extract_flat(zf, nested[0], temp_dir)
         with zipfile.ZipFile(inner_zip) as zf2:
-            zf2.extractall(temp_dir)
+            for name in zf2.namelist():
+                if not name.endswith("/"):
+                    extract_flat(zf2, name, temp_dir)
 
     shp_candidates = list(temp_dir.glob("*.shp"))
     if not shp_candidates:
@@ -362,8 +371,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"input not found: {input_path}", file=sys.stderr)
         return 1
 
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
+    DATA.mkdir(parents=True, exist_ok=True)
+    td_path = DATA / f"_legal_dong_{uuid.uuid4().hex[:8]}"
+    td_path.mkdir()
+    try:
         shp_path = _resolve_shp_path(input_path, td_path)
         print(f"Loading EMD shapefile: {shp_path.name}")
         gdf_src = load_emd(shp_path)
@@ -397,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
         pilot.to_parquet(output, index=False)
         print(f"\nManifest written: {output}  "
               f"rows={len(pilot)}  cols={len(pilot.columns)}")
+    finally:
+        shutil.rmtree(td_path, ignore_errors=True)
     return 0
 
 
