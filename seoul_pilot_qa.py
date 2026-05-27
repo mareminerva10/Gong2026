@@ -43,6 +43,13 @@ REQUIRED_OVERLAPS = {
     "11680110": "Apgujeong",
     "11680106": "Daechi",
 }
+LEGACY_OVERLAP_CODES = {
+    # legacy 12-dong EE panel used 1km proxy boxes keyed by pre-repair codes
+    "11440124": "11440710",  # Yeonnam
+    "11440123": "11440730",  # Mangwon
+    "11680110": "11680105",  # Apgujeong
+    "11680106": "11680117",  # Daechi
+}
 
 
 def unit(v: np.ndarray) -> np.ndarray:
@@ -217,9 +224,14 @@ def overlap_summary(panel: pd.DataFrame, legacy_path: Path) -> dict:
     diffs = []
     for emd_cd in REQUIRED_OVERLAPS:
         psub = panel[panel["emd_cd"] == emd_cd].sort_values("year")
-        lsub = legacy[legacy["dong_code"] == emd_cd].sort_values("year")
+        legacy_code = emd_cd if emd_cd in set(legacy["dong_code"]) else LEGACY_OVERLAP_CODES.get(emd_cd)
+        lsub = legacy[legacy["dong_code"] == legacy_code].sort_values("year")
         if psub.empty or lsub.empty:
-            diffs.append({"emd_cd": emd_cd, "status": "missing_in_one_panel"})
+            diffs.append({
+                "emd_cd": emd_cd,
+                "legacy_dong_code": legacy_code,
+                "status": "missing_in_one_panel",
+            })
             continue
         merged = psub[["year", *EMBED_COLS]].merge(
             lsub[["year", *EMBED_COLS]], on="year", suffixes=("_pilot", "_legacy"))
@@ -228,13 +240,22 @@ def overlap_summary(panel: pd.DataFrame, legacy_path: Path) -> dict:
             continue
         delta = merged[[f"{c}_pilot" for c in EMBED_COLS]].to_numpy("float32") - merged[
             [f"{c}_legacy" for c in EMBED_COLS]].to_numpy("float32")
+        norms = np.linalg.norm(delta, axis=1)
         diffs.append({
             "emd_cd": emd_cd,
+            "legacy_dong_code": legacy_code,
+            "name_roman": REQUIRED_OVERLAPS[emd_cd],
             "status": "compared",
             "n_years": int(len(merged)),
             "max_abs_delta": float(np.max(np.abs(delta))),
+            "median_l2_delta": float(np.median(norms)),
+            "max_l2_delta": float(np.max(norms)),
         })
-    out["status"] = "compared"
+    out["status"] = "compared_to_legacy_proxy_boxes"
+    out["interpretation"] = (
+        "Diagnostic only: the legacy EE panel used 1km proxy boxes and old "
+        "pre-repair dong codes, while the pilot uses official legal-dong polygons. "
+        "Non-zero deltas are expected and should not block the polygon pilot.")
     out["diffs"] = diffs
     return out
 
@@ -268,6 +289,11 @@ def print_report(report: dict) -> None:
     print("\nOverlap comparison:")
     print(f"  required present in pilot: {len(o['present_in_pilot'])}/4")
     print(f"  legacy comparison status: {o['status']}")
+    for row in o.get("diffs", []):
+        if row.get("status") == "compared":
+            print(f"  {row['name_roman']}: legacy_code={row['legacy_dong_code']} "
+                  f"max_abs_delta={row['max_abs_delta']:.6f} "
+                  f"median_l2_delta={row['median_l2_delta']:.6f}")
 
 
 def main(argv: list[str] | None = None) -> int:

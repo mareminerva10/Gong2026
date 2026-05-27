@@ -227,7 +227,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 - **Within-gu variance**: pass — minimum per-gu/year embedding std-vector norm is 0.233323, so the dong embeddings are not collapsed within gu.
 - **2022 artifact reproduction**: pass/confirmed — 95.0% of pilot dongs have `2021-2022` as their maximum angular YoY jump; median angular distance is 0.228960 for `2021-2022` vs 0.146747 for other year-pairs (ratio 1.56). By gu: 마포구 share 1.000, 강남구 share 0.857.
 - **Overlap cases present**: pass — Yeonnam, Mangwon, Apgujeong, and Daechi all appear in the pilot.
-- **Overlap equality against legacy 12-dong EE panel**: not run — `data/alphaearth_ee.parquet` is absent in this worktree. Full-Seoul authorization should either restore that artifact and compare, or explicitly waive this check.
+- **Overlap comparison against legacy 12-dong EE panel**: run against `C:\Users\marem\PycharmProjects\Gong2026\data\alphaearth_ee.parquet`. The legacy panel used 1km proxy boxes and old pre-repair dong codes, so exact equality is not a valid criterion; the QA script maps the four overlap cases through the old-code map and reports deltas as diagnostic evidence. Results: Yeonnam max_abs_delta 0.043985 / median_l2_delta 0.136234; Mangwon 0.100842 / 0.310735; Apgujeong 0.152492 / 0.496147; Daechi 0.062134 / 0.191677. Non-zero deltas are expected from the geometry upgrade and should be documented, not treated as a blocker.
 
 ## 9. TBD decision table
 

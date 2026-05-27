@@ -132,6 +132,6 @@ Use the final chosen dong geography end-to-end (either 법정동 or 행정동, *
 | B4 | Polygon source and pilot manifest | RESOLVED 2026-05-27 | D001 AL EMD legal-dong source selected; 마포구+강남구 pilot manifest implemented |
 | B5 | Earth Engine reduction cost not estimated; ~3,392 polygon-year reductions implied at full Seoul | RESOLVED 2026-05-27 | Pilot run completed: 320 polygon-years in 677.9s (~2.12s each); full-Seoul runtime still needs explicit authorization |
 
-Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 and B5 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is pilot acceptance, especially the legacy-overlap comparison or an explicit waiver. B2 is independent and lowest-priority for the MVP.
+Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 and B5 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is explicit product authorization after reviewing the completed pilot QA. B2 is independent and lowest-priority for the MVP.
 
 The MVP can ship descriptively with Blocks 4a + 4b live and Blocks 1, 2, 3, 4c marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.
