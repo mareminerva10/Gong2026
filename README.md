@@ -65,6 +65,7 @@ molit_redev_client.py    재개발/재건축 annual probe + national panel build
 molit_unsold_client.py   시·군·구별 미분양현황 monthly probe + Seoul gu-level panel builder
 legal_dong_polygons.py   D001 AL EMD loader + 마포구/강남구 pilot polygon manifest builder
 seoul_pilot_extract.py   resumable AlphaEarth extractor for the 마포구/강남구 pilot manifest
+seoul_pilot_qa.py        QA report for pilot completeness, variance, 2022 artifact, and overlap checks
 docs/                    methodology and scope specs (committed; see dashboard_mvp_spec, full_seoul_expansion_scope)
 archive/                 superseded code retained for reference
 data/labeled_cases.csv   hand-labeled cases (tracked)
@@ -81,10 +82,10 @@ outputs/                 generated plots (gitignored)
 | National redev intensity control | implemented; 8 years (2017–2024) validated against live API; additive invariant on 건립가구 categories holds; joined into `data/dong_year_model_panel.parquet` |
 | Gu-level unsold-housing stress control | implemented; 96 monthly pulls (2017-01..2024-12) over Seoul's 25 gus; annual mean/max/Dec; joined into `data/dong_year_model_panel.parquet` by `lawd_cd × year` |
 | Legal-dong polygon pilot manifest | implemented; loads NSDI D001 AL EMD snapshot (pinned `AL_D001_00_20260509(EMD)`), reprojects EPSG:5186→4326, filters to 마포구+강남구 (40 dongs), writes `data/pilot_legal_dong_manifest.parquet`. Canonical `dong_code` repair is complete (0/12 mismatches); 3 lat/lon-not-contained proxy-center cases remain as non-fatal `[data-QA]` warnings |
-| AlphaEarth pilot extractor | implemented as `seoul_pilot_extract.py`; validates the 40-dong pilot manifest, plans 320 `(emd_cd, year)` reductions, and writes resumable per-call cache under `data/seoul_pilot_alphaearth_cache/`. Dry-run verified; bounded live EE run succeeded for 3 dongs / 24 rows (16 fresh + 8 cached in 13.3s, 24/24 cached on offline resume). Full pilot pull and B5 cost estimate still pending |
+| AlphaEarth pilot extractor | implemented as `seoul_pilot_extract.py`; full 40-dong × 8-year pilot complete (320/320 rows, 0 missing) with resumable per-call cache under `data/seoul_pilot_alphaearth_cache/`; full run took 677.9s (~2.12s per polygon-year). `seoul_pilot_qa.py` passes completeness and within-gu variance, and reproduces the 2021→2022 artifact. Overlap comparison against the legacy 12-dong EE panel is pending because `data/alphaearth_ee.parquet` is not present in this worktree |
 | 재건축 (recon) annual table | granted but empty at style_num=1; parked pending portal-listed alternatives |
 | Data.go.kr 전월세 live pull | scaffolded; LAWD_CD extraction fixed for 8-digit codes; blocked on data.go.kr-decoded service key (StatNuri key returns 401 on `apis.data.go.kr`) |
 | Synthetic mock pipeline | works end-to-end; perfect LOO is by construction, not by evidence |
 | Hwagok / Mullae axis-specificity audit | open |
-| 2022 AlphaEarth artifact diagnosis | open |
+| 2022 AlphaEarth artifact diagnosis | reproduced in 마포구+강남구 pilot: 95% of dongs have 2021→2022 as the max angular YoY jump; MVP policy remains `flag_2022` |
 | Composite four-block model | not yet implemented; deliberately deferred until axis is validated |

@@ -181,6 +181,20 @@ with `geography ∈ {bjd, hjd}` (법정동 / 행정동) so a future re-pull at a
 
 Critical process correction: bounded `--limit` runs no longer write the default combined `data/seoul_pilot_alphaearth.parquet` panel unless `--output` is explicitly provided. This prevents a partial smoke-test panel from masquerading as the full 320-row pilot artifact; per-call cache files remain the canonical resume artifact.
 
+### Full pilot extraction status (2026-05-27)
+
+`seoul_pilot_extract.py --gcp-project gong2026` completed the full 40-dong × 8-year pilot:
+
+- **Rows**: 320/320 complete
+- **Cache**: 320 per-call parquet files under `data/seoul_pilot_alphaearth_cache/`
+- **Fresh/cached split during full run**: 296 fresh + 24 cached
+- **Missing**: 0
+- **Wall clock**: 677.9 seconds
+- **Observed per-target-row runtime**: 2.12 seconds
+- **Combined panel**: `data/seoul_pilot_alphaearth.parquet` (gitignored)
+
+At the observed pilot runtime, the 467-row Seoul legal-dong universe would imply roughly 3,736 polygon-years and about 2.2 hours of per-call extraction. Treat this as an order-of-magnitude planning estimate only; API load, retries, and geometry size can change full-Seoul runtime.
+
 ## 7. 2022 AlphaEarth artifact policy
 
 Inherited from `docs/dashboard_mvp_spec.md` §7. For the pilot:
@@ -204,6 +218,17 @@ The pilot is accepted (and full-Seoul expansion is authorized) only when **all**
 
 Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data-quality issue that requires re-investigation, not a green light. (7) is informational but required for the full-Seoul authorization.
 
+### Pilot QA status (2026-05-27)
+
+`seoul_pilot_qa.py` reads the completed pilot panel and writes `data/seoul_pilot_alphaearth_qa.json` (gitignored). Current findings:
+
+- **Completeness**: pass — 320/320 rows, 40 dongs, 8 years, no duplicate `(emd_cd, year)` pairs, no missing embedding cells.
+- **Gu counts**: 마포구 26 dongs, 강남구 14 dongs.
+- **Within-gu variance**: pass — minimum per-gu/year embedding std-vector norm is 0.233323, so the dong embeddings are not collapsed within gu.
+- **2022 artifact reproduction**: pass/confirmed — 95.0% of pilot dongs have `2021-2022` as their maximum angular YoY jump; median angular distance is 0.228960 for `2021-2022` vs 0.146747 for other year-pairs (ratio 1.56). By gu: 마포구 share 1.000, 강남구 share 0.857.
+- **Overlap cases present**: pass — Yeonnam, Mangwon, Apgujeong, and Daechi all appear in the pilot.
+- **Overlap equality against legacy 12-dong EE panel**: not run — `data/alphaearth_ee.parquet` is absent in this worktree. Full-Seoul authorization should either restore that artifact and compare, or explicitly waive this check.
+
 ## 9. TBD decision table
 
 | Decision | Options | Current default | Needed before code? |
@@ -213,7 +238,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Authoritative dong list | Derived from the chosen polygon source above (`A1` 8-digit code) | A1 field of D001 AL EMD | Resolved |
 | GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
-| EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call | No — recommendation pending pilot result |
+| EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call for pilot; batch/export still recommended for full Seoul if runtime or quota becomes painful | Resolved for pilot |
 | Cache layout | `{geography}_{emd_cd}_{year}.parquet` / batch parquet | per-call parquet (`bjd_<emd_cd>_<year>.parquet`) | No |
 | Polygon CRS handling | reproject at load / keep native | reproject to EPSG:4326 at load | No |
 | Crosswalk requirement | 법정동↔행정동 crosswalk needed? | Depends on geography choice | Conditional on §3 |
