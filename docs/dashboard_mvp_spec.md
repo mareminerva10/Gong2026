@@ -50,7 +50,7 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 | Block | Variable(s) | Source | Grain | Status (2026-05-26) |
 |---|---|---|---|---|
 | 1 Tenure pressure | `wolse_ratio`, `n_wolse`, `n_jeonse`, `median_deposit_per_m2`, `median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` OR StatNuri tenure-split form | gu × month (target) | **PARKED** — see [B1] |
-| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs only; pilot manifest ready for 마포구+강남구**; full-Seoul expansion gated on [B5] and pilot acceptance |
+| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs only; pilot manifest + extractor ready for 마포구+강남구**; full-Seoul expansion gated on [B5] and pilot acceptance |
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
 | 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |

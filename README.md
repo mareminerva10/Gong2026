@@ -64,6 +64,7 @@ molit_stat_nuri_client.py 통계누리 OpenAPI probe client (transport + retry +
 molit_redev_client.py    재개발/재건축 annual probe + national panel builder (on top of StatNuri)
 molit_unsold_client.py   시·군·구별 미분양현황 monthly probe + Seoul gu-level panel builder
 legal_dong_polygons.py   D001 AL EMD loader + 마포구/강남구 pilot polygon manifest builder
+seoul_pilot_extract.py   resumable AlphaEarth extractor for the 마포구/강남구 pilot manifest
 docs/                    methodology and scope specs (committed; see dashboard_mvp_spec, full_seoul_expansion_scope)
 archive/                 superseded code retained for reference
 data/labeled_cases.csv   hand-labeled cases (tracked)
@@ -80,6 +81,7 @@ outputs/                 generated plots (gitignored)
 | National redev intensity control | implemented; 8 years (2017–2024) validated against live API; additive invariant on 건립가구 categories holds; joined into `data/dong_year_model_panel.parquet` |
 | Gu-level unsold-housing stress control | implemented; 96 monthly pulls (2017-01..2024-12) over Seoul's 25 gus; annual mean/max/Dec; joined into `data/dong_year_model_panel.parquet` by `lawd_cd × year` |
 | Legal-dong polygon pilot manifest | implemented; loads NSDI D001 AL EMD snapshot (pinned `AL_D001_00_20260509(EMD)`), reprojects EPSG:5186→4326, filters to 마포구+강남구 (40 dongs), writes `data/pilot_legal_dong_manifest.parquet`. Canonical `dong_code` repair is complete (0/12 mismatches); 3 lat/lon-not-contained proxy-center cases remain as non-fatal `[data-QA]` warnings |
+| AlphaEarth pilot extractor | implemented as `seoul_pilot_extract.py`; validates the 40-dong pilot manifest, plans 320 `(emd_cd, year)` reductions, and writes resumable per-call cache under `data/seoul_pilot_alphaearth_cache/`. Dry-run verified; live EE pilot pull not yet run |
 | 재건축 (recon) annual table | granted but empty at style_num=1; parked pending portal-listed alternatives |
 | Data.go.kr 전월세 live pull | scaffolded; LAWD_CD extraction fixed for 8-digit codes; blocked on data.go.kr-decoded service key (StatNuri key returns 401 on `apis.data.go.kr`) |
 | Synthetic mock pipeline | works end-to-end; perfect LOO is by construction, not by evidence |

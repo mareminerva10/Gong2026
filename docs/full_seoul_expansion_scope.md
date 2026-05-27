@@ -135,7 +135,7 @@ CRS and encoding handling are now anchored to the on-disk inspection above: EPSG
 
 For each pilot polygon row, the loader must emit:
 
-- `emd_cd` — canonical 8-digit 법정동 code from `A1`. This is the join key. **Do not derive it from `labeled_cases.csv.dong_code`** — that field is 행정동-numbered and disagrees with `A1` for every labeled case.
+- `emd_cd` — canonical 8-digit 법정동 code from `A1`. This is the join key. **Do not derive it from `labeled_cases.csv.dong_code`** during source loading — the CSV is now repaired, but the official D001 `A1` field remains canonical.
 - `dong_name_kr` — Korean dong name from `A2`.
 - `lawd_cd` — 5-digit 시군구 code from `A4`. Used for filtering to 마포구 (11440) and 강남구 (11680).
 - `effective_date` — snapshot effective date from `A3`. Recorded for provenance.
@@ -168,7 +168,7 @@ For each pilot polygon row, the loader must emit:
 Follow the existing `data/audit_cache/{poly_id}_{year}.parquet` pattern from `audit_2022_artifact.py`. Per-call parquet survives partial runs and matches the EE-extract pattern in `prototype.py`. Naming proposed:
 
 ```
-data/seoul_pilot_alphaearth_cache/{geography}_{dong_code}_{year}.parquet
+data/seoul_pilot_alphaearth_cache/{geography}_{emd_cd}_{year}.parquet
 ```
 
 with `geography ∈ {bjd, hjd}` (법정동 / 행정동) so a future re-pull at a different geography lives in a different cache without collisions.
@@ -208,7 +208,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
 | EE reduction strategy | per-call `reduceRegion` / batch `reduceRegions` / Task export | per-call | No — recommendation pending pilot result |
-| Cache layout | `{geography}_{dong_code}_{year}.parquet` (proposed) / batch parquet | per-call parquet | No |
+| Cache layout | `{geography}_{emd_cd}_{year}.parquet` / batch parquet | per-call parquet (`bjd_<emd_cd>_<year>.parquet`) | No |
 | Polygon CRS handling | reproject at load / keep native | reproject to EPSG:4326 at load | No |
 | Crosswalk requirement | 법정동↔행정동 crosswalk needed? | Depends on geography choice | Conditional on §3 |
 | Full-Seoul authorization | Manual / automatic on pilot pass | Manual | No |
@@ -228,6 +228,6 @@ Each `TBD` becomes a one-line follow-up commit when resolved, keeping decisions 
 
 ## Notes
 
-- This document is intentionally light on code references and heavy on decisions. The polygon manifest builder now exists as `legal_dong_polygons.py`; the next module is the AlphaEarth pilot extractor (`seoul_pilot_extract.py`) that consumes `data/pilot_legal_dong_manifest.parquet` and writes the proposed cache layout.
-- The companion full-Seoul-cost section will be added once a minute-per-polygon-year wall-clock figure exists from a small live test.
-- All four bold `TBD`s in the §9 table are now resolved. Pilot polygon-source download, canonical-code repair, and pilot manifest builder are complete; the next concrete code work is the AlphaEarth pilot extractor, gated on §8 acceptance criteria.
+- This document is intentionally light on code references and heavy on decisions. The polygon manifest builder exists as `legal_dong_polygons.py`; the AlphaEarth pilot extractor exists as `seoul_pilot_extract.py` and consumes `data/pilot_legal_dong_manifest.parquet`.
+- The companion full-Seoul-cost section will be added once `seoul_pilot_extract.py` has a minute-per-polygon-year wall-clock figure from a small live test.
+- All four bold `TBD`s in the §9 table are now resolved. Pilot polygon-source download, canonical-code repair, pilot manifest builder, and pilot extractor scaffolding are complete; the next concrete work is a bounded live EE pilot pull plus the §8 QA report.

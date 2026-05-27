@@ -13,8 +13,8 @@ and surfaces any `dong_code` mismatches as non-fatal legacy-code
 drift. After the canonical-code repair, the expected mismatch count is 0.
 
 This module does **no** Earth Engine calls, no model-panel changes,
-and no `labeled_cases.csv` repair. The mismatch report it prints is
-the input to a future, separate CSV-repair commit.
+and no `labeled_cases.csv` repair. The mismatch report it prints stays
+as a guardrail for future labeled-case additions and source refreshes.
 
 Source schema (verified 2026-05-27 against `AL_D001_00_20260509(EMD)`,
 see `docs/full_seoul_expansion_scope.md` §4):
