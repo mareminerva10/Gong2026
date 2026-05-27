@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import geopandas as gpd
@@ -39,6 +40,7 @@ DATA = HERE / "data"
 DEFAULT_MANIFEST = DATA / "pilot_legal_dong_manifest.parquet"
 DEFAULT_CACHE_DIR = DATA / "seoul_pilot_alphaearth_cache"
 DEFAULT_OUTPUT = DATA / "seoul_pilot_alphaearth.parquet"
+DEFAULT_COST_LOG = DATA / "seoul_pilot_cost_log.csv"
 
 YEARS = list(range(2017, 2025))
 EMBED_COLS = [f"A{i:02d}" for i in range(64)]
@@ -69,6 +71,23 @@ def initialize_ee(gcp_project: str, service_account_key: str | None) -> None:
 
 def cache_path(cache_dir: Path, emd_cd: str, year: int) -> Path:
     return cache_dir / f"bjd_{emd_cd}_{year}.parquet"
+
+
+def append_cost_log(cost_log: Path, emd_cd: str, year: int, elapsed_s: float) -> None:
+    """Append one row per successful fresh EE pull.
+
+    Writes `timestamp,emd_cd,year,elapsed_s` with header on first write.
+    `elapsed_s` is wall-clock for the full fetch attempt including any
+    retries — i.e. the real cost of acquiring this (emd_cd, year) row.
+    See docs/full_seoul_expansion_scope.md §8 caveat #7.
+    """
+    cost_log.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not cost_log.exists()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with cost_log.open("a", encoding="utf-8", newline="") as f:
+        if is_new:
+            f.write("timestamp,emd_cd,year,elapsed_s\n")
+        f.write(f"{ts},{emd_cd},{year},{elapsed_s:.4f}\n")
 
 
 def parse_years(raw: str) -> list[int]:
@@ -181,6 +200,7 @@ def fetch_embeddings(
     sleep_s: float,
     retries: int,
     limit: int | None,
+    cost_log: Path | None = None,
 ) -> pd.DataFrame:
     if not offline and not dry_run:
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -212,6 +232,7 @@ def fetch_embeddings(
 
         vec = None
         last_error: Exception | None = None
+        pull_started = time.perf_counter()
         for attempt in range(retries + 1):
             try:
                 vec = fetch_one(mapping(row.geometry), year, max_pixels, tile_scale)
@@ -224,6 +245,7 @@ def fetch_embeddings(
                 print(f"  ! retry {attempt + 1}/{retries} for "
                       f"{emd_cd} {year}: {exc}", file=sys.stderr)
                 time.sleep(wait_s)
+        pull_elapsed_s = time.perf_counter() - pull_started
         if vec is None:
             missing.append((emd_cd, year))
             if last_error is not None:
@@ -240,6 +262,9 @@ def fetch_embeddings(
         tmp = cache.with_suffix(".tmp")
         pd.DataFrame([rec]).to_parquet(tmp, index=False)
         tmp.replace(cache)
+        # Persistent per-fresh-pull cost log; see §8 caveat #7.
+        if cost_log is not None:
+            append_cost_log(cost_log, emd_cd, year, pull_elapsed_s)
         rows.append(rec)
         pulled += 1
         if pulled % 10 == 0:
@@ -291,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"pilot GeoParquet manifest (default: {DEFAULT_MANIFEST})")
     ap.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR),
                     help=f"per-call cache directory (default: {DEFAULT_CACHE_DIR})")
+    ap.add_argument("--cost-log", default=str(DEFAULT_COST_LOG),
+                    help=f"per-fresh-pull cost log CSV "
+                         f"(default: {DEFAULT_COST_LOG}; pass empty string to disable)")
     ap.add_argument("--output",
                     help=f"combined output parquet (default: {DEFAULT_OUTPUT}; "
                          "skipped for --limit runs unless explicitly set)")
@@ -332,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         initialize_ee(args.gcp_project, args.service_account_key)
 
+    cost_log = Path(args.cost_log) if args.cost_log else None
     started = time.perf_counter()
     df = fetch_embeddings(
         manifest,
@@ -344,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
         sleep_s=args.sleep,
         retries=args.retries,
         limit=args.limit,
+        cost_log=cost_log,
     )
     elapsed_s = time.perf_counter() - started
     validate_panel(df, expected)
