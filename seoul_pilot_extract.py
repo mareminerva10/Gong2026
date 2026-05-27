@@ -179,6 +179,7 @@ def fetch_embeddings(
     max_pixels: float,
     tile_scale: int,
     sleep_s: float,
+    retries: int,
     limit: int | None,
 ) -> pd.DataFrame:
     if not offline and not dry_run:
@@ -209,9 +210,25 @@ def fetch_embeddings(
             planned += 1
             continue
 
-        vec = fetch_one(mapping(row.geometry), year, max_pixels, tile_scale)
+        vec = None
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                vec = fetch_one(mapping(row.geometry), year, max_pixels, tile_scale)
+                break
+            except Exception as exc:  # Earth Engine transient errors vary by backend.
+                last_error = exc
+                if attempt >= retries:
+                    raise
+                wait_s = min(2.0 * (attempt + 1), 10.0)
+                print(f"  ! retry {attempt + 1}/{retries} for "
+                      f"{emd_cd} {year}: {exc}", file=sys.stderr)
+                time.sleep(wait_s)
         if vec is None:
             missing.append((emd_cd, year))
+            if last_error is not None:
+                print(f"  ! no embedding {emd_cd} {row.dong_name_kr} {year} "
+                      f"after retry: {last_error}", file=sys.stderr)
             print(f"  ! no embedding {emd_cd} {row.dong_name_kr} {year}", file=sys.stderr)
             continue
         rec = record_from(row, year, vec)
@@ -267,8 +284,9 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"pilot GeoParquet manifest (default: {DEFAULT_MANIFEST})")
     ap.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR),
                     help=f"per-call cache directory (default: {DEFAULT_CACHE_DIR})")
-    ap.add_argument("--output", default=str(DEFAULT_OUTPUT),
-                    help=f"combined output parquet (default: {DEFAULT_OUTPUT})")
+    ap.add_argument("--output",
+                    help=f"combined output parquet (default: {DEFAULT_OUTPUT}; "
+                         "skipped for --limit runs unless explicitly set)")
     ap.add_argument("--years", default="2017-2024",
                     help="comma/range years, e.g. 2017-2024 or 2021,2022")
     ap.add_argument("--gcp-project",
@@ -285,11 +303,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tile-scale", type=int, default=4)
     ap.add_argument("--sleep", type=float, default=0.05,
                     help="seconds to sleep after fresh EE pulls")
+    ap.add_argument("--retries", type=int, default=2,
+                    help="retry count for transient EE reduceRegion errors")
     args = ap.parse_args(argv)
 
     years = parse_years(args.years)
     manifest = load_manifest(Path(args.manifest))
-    expected = len(manifest) * len(years)
+    full_expected = len(manifest) * len(years)
+    expected = full_expected
     if args.limit is not None:
         expected = min(expected, args.limit)
     print(f"Manifest: {len(manifest)} legal dongs "
@@ -304,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         initialize_ee(args.gcp_project, args.service_account_key)
 
+    started = time.perf_counter()
     df = fetch_embeddings(
         manifest,
         years,
@@ -313,15 +335,28 @@ def main(argv: list[str] | None = None) -> int:
         max_pixels=args.max_pixels,
         tile_scale=args.tile_scale,
         sleep_s=args.sleep,
+        retries=args.retries,
         limit=args.limit,
     )
+    elapsed_s = time.perf_counter() - started
     validate_panel(df, expected)
-    if not args.dry_run and not df.empty:
-        output = Path(args.output)
+    print(f"  elapsed: {elapsed_s:.1f}s  "
+          f"({elapsed_s / max(expected, 1):.2f}s per target row)")
+    output_arg_was_set = args.output is not None
+    output_path = Path(args.output) if output_arg_was_set else DEFAULT_OUTPUT
+    should_write_output = (
+        not args.dry_run
+        and not df.empty
+        and (output_arg_was_set or args.limit is None or len(df) == full_expected)
+    )
+    if should_write_output:
+        output = output_path
         output.parent.mkdir(parents=True, exist_ok=True)
         df = df.sort_values(["lawd_cd", "emd_cd", "year"]).reset_index(drop=True)
         df.to_parquet(output, index=False)
         print(f"Panel written: {output} rows={len(df)} cols={len(df.columns)}")
+    elif not args.dry_run and not df.empty:
+        print("Panel output skipped for bounded --limit run; per-call cache was written.")
     return 0
 
 

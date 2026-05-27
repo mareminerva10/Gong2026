@@ -177,7 +177,9 @@ with `geography ∈ {bjd, hjd}` (법정동 / 행정동) so a future re-pull at a
 
 ### Live smoke status
 
-`seoul_pilot_extract.py --gcp-project gong2026 --limit 1` succeeded on 2026-05-27 outside the sandbox after ADC token refresh, writing `data/seoul_pilot_alphaearth_cache/bjd_11440101_2017.parquet` in ~8.6 seconds wall clock. This confirms EE auth, geometry construction, reduction, and per-call cache writing for one row. It is **not** a full B5 cost estimate; use a bounded multi-row run before extrapolating pilot or full-Seoul runtime.
+`seoul_pilot_extract.py --gcp-project gong2026 --limit 1` succeeded on 2026-05-27 outside the sandbox after ADC token refresh, writing `data/seoul_pilot_alphaearth_cache/bjd_11440101_2017.parquet` in ~8.6 seconds wall clock. Follow-up bounded runs confirmed broader behavior: `--limit 8` completed one full legal dong (7 fresh + 1 cached) in 7.3 seconds, and `--limit 24` completed three full legal dongs (16 fresh + 8 cached) in 13.3 seconds, with an offline resume check reporting 24/24 cached. This confirms EE auth, geometry construction, reduction, per-call cache writing, and resume detection across multiple legal dongs. It is **not** a full B5 cost estimate; use the complete 320-row pilot before authorizing full-Seoul expansion.
+
+Critical process correction: bounded `--limit` runs no longer write the default combined `data/seoul_pilot_alphaearth.parquet` panel unless `--output` is explicitly provided. This prevents a partial smoke-test panel from masquerading as the full 320-row pilot artifact; per-call cache files remain the canonical resume artifact.
 
 ## 7. 2022 AlphaEarth artifact policy
 
