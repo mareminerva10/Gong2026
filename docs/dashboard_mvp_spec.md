@@ -101,7 +101,7 @@ Critical implementation choices:
 - 2017 has null YoY metrics by construction; all later years have YoY metrics.
 - 2022 rows carry `physical_2022_artifact_flag=True` because they represent the 2021→2022 transition.
 - Block 1 tenure and Block 3 vulnerability are status-marked, not zero-filled.
-- Block 4a/4b are status-marked as `missing_local_artifact` in this worktree unless their parquet artifacts are present at build time.
+- Block 4a/4b merge into the contract when their local parquet artifacts are present at build time; otherwise they remain status-marked as `missing_local_artifact`.
 - No forecast, probability, composite score, or displacement-risk output is computed.
 
 ## 7. AlphaEarth 2022 artifact policy

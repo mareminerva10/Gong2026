@@ -182,8 +182,20 @@ def merge_optional_redev(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     if "year" not in redev.columns:
         raise ValueError("redevelopment intensity panel missing required column: year")
     redev["year"] = redev["year"].astype(int)
-    value_cols = [c for c in redev.columns
-                  if c.startswith("national_redevelopment_intensity_")]
+    rename = {
+        c: f"national_redevelopment_intensity_{c.removeprefix('redev_')}"
+        for c in redev.columns
+        if c.startswith("redev_")
+    }
+    redev = redev.rename(columns=rename)
+    value_cols = [
+        c for c in redev.columns
+        if c.startswith("national_redevelopment_intensity_")
+    ]
+    if not value_cols:
+        raise ValueError(
+            "redevelopment intensity panel has no redev_* or "
+            "national_redevelopment_intensity_* value columns")
     out = df.merge(redev[["year", *value_cols]], on="year", how="left")
     out["development_pressure_status"] = np.where(
         out[value_cols].notna().any(axis=1), "live", "missing_join_row")
@@ -295,7 +307,7 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
     for col, expected in expected_status.items():
         actual = sorted(df[col].astype(str).unique().tolist())
         if actual != [expected]:
-            if "missing_local_artifact" in expected and "live" in actual:
+            if expected == "missing_local_artifact" and actual == ["live"]:
                 warnings.append(f"{col} includes live artifact rows: {actual}")
             else:
                 errors.append(f"{col} expected {expected}, got {actual}")

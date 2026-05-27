@@ -62,10 +62,10 @@ Sources: [Earth Engine coding best practices](https://developers.google.com/eart
 
 ## Follow-through Implemented
 
-The recommended next artifact now exists as `dashboard_pilot_contract.py`. It writes a gitignored pilot table at `data/dashboard_pilot_contract.parquet` with 320 legal-dong-year rows, descriptive AlphaEarth physical-change metrics, 2022 artifact flags, within-gu anomaly ranks/z-scores, and explicit parked/missing status columns for the non-live blocks. It deliberately computes no forecast, probability, displacement-risk score, or composite score.
+The recommended next artifact now exists as `dashboard_pilot_contract.py`. It writes a gitignored pilot table at `data/dashboard_pilot_contract.parquet` with 320 legal-dong-year rows, descriptive AlphaEarth physical-change metrics, 2022 artifact flags, within-gu anomaly ranks/z-scores, and explicit status columns for every block. When local Block 4 artifacts are present, the contract merges live gu-year unsold controls and national-year redevelopment controls. It deliberately computes no forecast, probability, displacement-risk score, or composite score.
 
 This means the best next project move is no longer "prove extraction works"; that is done for the pilot. The next high-leverage choices are:
 
-1. Decide whether to restore local Block 4a/4b artifacts into this worktree so the contract can merge live unsold/redevelopment controls.
-2. Build a thin dashboard/UI prototype over `dashboard_pilot_contract.parquet` that renders status badges and physical-change diagnostics before any full-Seoul expansion.
+1. Build a thin dashboard/UI prototype over `dashboard_pilot_contract.parquet` that renders status badges and physical-change diagnostics before any full-Seoul expansion.
+2. Decide whether Block 1 tenure can be unparked via a valid live source or should remain visibly parked in the MVP.
 3. Only after the contract-driven UI is clear, authorize full-Seoul Block 2 extraction.
