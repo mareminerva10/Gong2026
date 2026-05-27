@@ -47,6 +47,15 @@ python prototype.py --mode ee --gcp-project YOURS --wolse-source molit   # both 
 
 Perfect leave-one-out on mock data is *expected* (the synthetic generator plants a shared drift direction). It is not validation.
 
+Local dashboard:
+
+```bash
+python dashboard_pilot_contract.py
+python dashboard_app.py --host 127.0.0.1 --port 8765
+```
+
+Then open `http://127.0.0.1:8765`. The dashboard reads `data/dashboard_pilot_contract.parquet`, renders the 마포구+강남구 pilot, and keeps live/parked/not-scoped block statuses visible. It does not compute or display a forecast, probability, or composite score.
+
 ## Data sources
 
 - **AlphaEarth annual embeddings** (`GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL`) via Earth Engine, 2017–2024. Requires a GCP project with the Earth Engine API enabled.
@@ -67,6 +76,7 @@ legal_dong_polygons.py   D001 AL EMD loader + 마포구/강남구 pilot polygon 
 seoul_pilot_extract.py   resumable AlphaEarth extractor for the 마포구/강남구 pilot manifest
 seoul_pilot_qa.py        QA report for pilot completeness, variance, 2022 artifact, and overlap checks
 dashboard_pilot_contract.py descriptive dashboard handoff table for the completed AlphaEarth pilot
+dashboard_app.py         localhost dashboard over the pilot contract
 docs/                    methodology and scope specs (committed; see dashboard_mvp_spec, full_seoul_expansion_scope)
 archive/                 superseded code retained for reference
 data/labeled_cases.csv   hand-labeled cases (tracked)

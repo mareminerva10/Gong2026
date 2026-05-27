@@ -27,3 +27,6 @@ data/molit_cache/
 
 # Generated plots
 outputs/
+
+# Local dashboard process marker
+.dashboard_server.pid

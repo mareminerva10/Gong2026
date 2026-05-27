@@ -96,6 +96,8 @@ These should be string-valued columns so they survive merges and round-trip thro
 
 `dashboard_pilot_contract.py` is the first concrete dashboard handoff table. It reads the completed legal-dong AlphaEarth pilot and writes `data/dashboard_pilot_contract.parquet` (gitignored). The contract has 320 rows (40 dongs × 8 years), keeps 64 embedding bands for auditability, and adds descriptive Block 2 metrics plus explicit status columns for every other block.
 
+`dashboard_app.py` serves the first localhost dashboard over that contract. It exposes year, gu, and metric controls; legal-dong centroid visualization; top-dong rankings; selected-dong timelines; and block status badges. It is a UI for the descriptive contract only, not a scoring or forecasting app.
+
 Critical implementation choices:
 
 - 2017 has null YoY metrics by construction; all later years have YoY metrics.
