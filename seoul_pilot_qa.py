@@ -21,12 +21,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from legal_dong_polygons import SEOUL_GU_NAME
+from legal_dong_polygons import (
+    PILOT_LAWD_CDS,
+    SEOUL_GU_NAME,
+    _resolve_shp_path,
+    load_emd,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -206,6 +212,53 @@ def variance_summary(panel: pd.DataFrame) -> dict:
     }
 
 
+def source_completeness(panel: pd.DataFrame,
+                         source_shp_path: Path | None) -> dict:
+    """Verify that the pilot manifest reflects every 마포구+강남구 dong
+    present in the source D001 EMD shapefile. Catches manifest-filtering
+    bugs and any rows manually dropped between source and panel.
+
+    If `source_shp_path` is None or missing on disk, returns
+    `{"checked": False, ...}` and contributes nothing to hard-fail.
+
+    Honest caveat: the "authoritative dong list" here is the source SHP
+    itself, not an independent MOIS 법정동 코드 표. This closes the
+    manifest-regression gap but does not catch source-vs-MOIS divergence.
+    Maps to §8 acceptance criterion #1.
+    """
+    if source_shp_path is None:
+        return {"checked": False, "reason": "no --source-shp provided"}
+    if not source_shp_path.exists():
+        return {"checked": False,
+                "reason": f"source SHP path not found: {source_shp_path}"}
+
+    with tempfile.TemporaryDirectory() as td:
+        shp = _resolve_shp_path(source_shp_path, Path(td))
+        gdf_src = load_emd(shp)
+
+    pilot_src = gdf_src[gdf_src["lawd_cd"].astype(str).isin(PILOT_LAWD_CDS)].copy()
+    src_dongs = set(pilot_src["emd_cd"].astype(str))
+    panel_dongs = set(panel["emd_cd"].astype(str))
+    missing = sorted(src_dongs - panel_dongs)
+    extra = sorted(panel_dongs - src_dongs)
+    by_gu_src = (pilot_src.groupby("lawd_cd")["emd_cd"]
+                          .nunique()
+                          .to_dict())
+
+    return {
+        "checked": True,
+        "source_shp": str(source_shp_path),
+        "n_source_dongs": len(src_dongs),
+        "n_panel_dongs": len(panel_dongs),
+        "n_missing_from_panel": len(missing),
+        "n_extra_in_panel": len(extra),
+        "missing_examples": missing[:10],
+        "extra_examples": extra[:10],
+        "by_gu_source": {str(k): int(v) for k, v in by_gu_src.items()},
+        "pass": (len(missing) == 0 and len(extra) == 0),
+    }
+
+
 def lawd_gu_consistency(panel: pd.DataFrame) -> dict:
     """Verify that every panel row's `gu_name` agrees with the canonical
     `SEOUL_GU_NAME[lawd_cd]` mapping from `legal_dong_polygons`. The
@@ -311,6 +364,17 @@ def print_report(report: dict) -> None:
     print(f"  median std-vector norm: {v['median_std_vector_norm']:.6f}")
     print(f"  pass: {v['pass']}")
 
+    sc = report["source_completeness"]
+    print("\nSource SHP completeness (§8 #1):")
+    if not sc.get("checked"):
+        print(f"  not checked: {sc.get('reason', 'unknown')}")
+    else:
+        print(f"  source dongs (마포구+강남구): {sc['n_source_dongs']}  "
+              f"panel dongs: {sc['n_panel_dongs']}  "
+              f"missing: {sc['n_missing_from_panel']}  "
+              f"extra: {sc['n_extra_in_panel']}")
+        print(f"  pass: {sc['pass']}")
+
     lgc = report["lawd_gu_consistency"]
     print("\nlawd_cd ↔ gu_name consistency (§8 #4a):")
     print(f"  rows: {lgc['n_rows']}  mismatches: {lgc['n_mismatch']}  "
@@ -350,14 +414,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--panel", default=str(DEFAULT_PANEL))
     ap.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     ap.add_argument("--legacy-panel", default=str(DEFAULT_LEGACY))
+    ap.add_argument("--source-shp", default=None,
+                    help="optional path to the source D001 EMD ZIP/SHP/dir "
+                         "for the §8 #1 source-completeness check; skipped if unset")
     ap.add_argument("--output", default=str(DEFAULT_REPORT))
     args = ap.parse_args(argv)
 
     panel = load_panel(Path(args.panel))
     yoy = yoy_distances(panel)
+    source_shp = Path(args.source_shp) if args.source_shp else None
     report = {
         "panel": str(Path(args.panel)),
         "completeness": completeness(panel, Path(args.manifest), YEARS),
+        "source_completeness": source_completeness(panel, source_shp),
         "lawd_gu_consistency": lawd_gu_consistency(panel),
         "within_gu_variance": variance_summary(panel),
         "artifact_2022": artifact_summary(yoy),
@@ -370,8 +439,11 @@ def main(argv: list[str] | None = None) -> int:
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\nQA report written: {output}")
 
+    sc = report["source_completeness"]
+    source_fail = sc.get("checked", False) and not sc.get("pass", False)
     hard_fail = (
         not report["completeness"]["pass"]
+        or source_fail
         or not report["lawd_gu_consistency"]["pass"]
         or not report["within_gu_variance"]["pass"]
         or len(report["overlap"]["present_in_pilot"]) != 4
