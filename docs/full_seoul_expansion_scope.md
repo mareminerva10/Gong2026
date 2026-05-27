@@ -175,6 +175,10 @@ with `geography ∈ {bjd, hjd}` (법정동 / 행정동) so a future re-pull at a
 
 `data/seoul_pilot_alphaearth_cache/` should be added to `.gitignore` proactively (or covered by the existing `data/*` rule — it is already, but worth confirming during implementation).
 
+### Live smoke status
+
+`seoul_pilot_extract.py --gcp-project gong2026 --limit 1` succeeded on 2026-05-27 outside the sandbox after ADC token refresh, writing `data/seoul_pilot_alphaearth_cache/bjd_11440101_2017.parquet` in ~8.6 seconds wall clock. This confirms EE auth, geometry construction, reduction, and per-call cache writing for one row. It is **not** a full B5 cost estimate; use a bounded multi-row run before extrapolating pilot or full-Seoul runtime.
+
 ## 7. 2022 AlphaEarth artifact policy
 
 Inherited from `docs/dashboard_mvp_spec.md` §7. For the pilot:
