@@ -1,0 +1,389 @@
+"""
+dashboard_pilot_contract.py
+===========================
+
+Build a dashboard-ready pilot contract from the completed Seoul AlphaEarth
+legal-dong pilot. This is a descriptive handoff table, not a forecast table.
+
+The contract intentionally keeps evidence blocks separate and explicit:
+
+- Block 2 physical change is live for the Mapo-gu + Gangnam-gu pilot.
+- Block 1 tenure pressure is parked.
+- Block 3 vulnerability is not scoped.
+- Block 4 controls are included only if their local parquet artifacts exist;
+  otherwise the output records missing-local-artifact status fields.
+
+No Earth Engine calls are made here. No composite score, prediction, calibrated
+probability, or gentrification label is computed.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+HERE = Path(__file__).resolve().parent
+DATA = HERE / "data"
+
+DEFAULT_ALPHAEARTH = DATA / "seoul_pilot_alphaearth.parquet"
+DEFAULT_QA = DATA / "seoul_pilot_alphaearth_qa.json"
+DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
+DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
+DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
+
+YEARS = list(range(2017, 2025))
+EMBED_COLS = [f"A{i:02d}" for i in range(64)]
+SUSPECT_TRANSITION_TO_YEAR = 2022
+PROHIBITED_SUBSTRINGS = (
+    "forecast",
+    "prediction",
+    "probability",
+    "risk_score",
+    "composite_score",
+    "gentrification_score",
+)
+
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(v))
+    return v / norm if norm > 1e-12 else v
+
+
+def load_alphaearth(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"missing AlphaEarth pilot panel: {path}")
+    df = pd.read_parquet(path)
+    required = {
+        "emd_cd",
+        "dong_name_kr",
+        "lawd_cd",
+        "gu_name",
+        "year",
+        "centroid_lat",
+        "centroid_lon",
+        *EMBED_COLS,
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"AlphaEarth panel missing required columns: {sorted(missing)}")
+    df = df.copy()
+    df["emd_cd"] = df["emd_cd"].astype(str)
+    df["lawd_cd"] = df["lawd_cd"].astype(str)
+    df["year"] = df["year"].astype(int)
+    df = df.sort_values(["emd_cd", "year"]).reset_index(drop=True)
+    return df
+
+
+def physical_metrics(panel: pd.DataFrame) -> pd.DataFrame:
+    out = panel.copy()
+    mat = out[EMBED_COLS].to_numpy("float64")
+    out["physical_embedding_norm"] = np.linalg.norm(mat, axis=1)
+
+    yoy_rows: list[dict] = []
+    for emd_cd, sub in out.groupby("emd_cd", sort=False):
+        sub = sub.sort_values("year")
+        vecs = sub[EMBED_COLS].to_numpy("float64")
+        years = sub["year"].to_numpy("int64")
+        for i in range(1, len(sub)):
+            a = vecs[i - 1]
+            b = vecs[i]
+            a_u = _unit(a)
+            b_u = _unit(b)
+            cos = float(np.clip(np.dot(a_u, b_u), -1.0, 1.0))
+            yoy_rows.append({
+                "emd_cd": str(emd_cd),
+                "year": int(years[i]),
+                "physical_yoy_year_pair": f"{years[i - 1]}-{years[i]}",
+                "physical_yoy_angular": float(np.arccos(cos)),
+                "physical_yoy_cosine_dist": float(1.0 - cos),
+                "physical_yoy_euclid": float(np.linalg.norm(b - a)),
+            })
+
+    yoy = pd.DataFrame(yoy_rows)
+    out = out.merge(yoy, on=["emd_cd", "year"], how="left")
+    out["physical_2022_artifact_flag"] = out["year"].eq(SUSPECT_TRANSITION_TO_YEAR)
+    out.loc[out["physical_yoy_angular"].isna(), "physical_2022_artifact_flag"] = False
+
+    grouped = out.groupby(["lawd_cd", "year"], dropna=False)["physical_yoy_angular"]
+    mean = grouped.transform("mean")
+    std = grouped.transform("std")
+    out["physical_yoy_angular_gu_z"] = (out["physical_yoy_angular"] - mean) / std
+    out.loc[std.fillna(0).eq(0), "physical_yoy_angular_gu_z"] = np.nan
+    out["physical_yoy_angular_gu_rank_desc"] = grouped.rank(method="min", ascending=False)
+    count = grouped.transform("count")
+    out["physical_yoy_angular_gu_percentile_desc"] = (
+        1.0 - ((out["physical_yoy_angular_gu_rank_desc"] - 1.0) / (count - 1.0))
+    )
+    out.loc[count.le(1) | out["physical_yoy_angular"].isna(),
+            "physical_yoy_angular_gu_percentile_desc"] = np.nan
+    return out
+
+
+def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["physical_source"] = "alphaearth_ee"
+    out["physical_grain"] = "legal-dong-year"
+    out["physical_status"] = "live"
+    out["physical_artifact_policy"] = "flag_2022"
+
+    out["tenure_source"] = "parked"
+    out["tenure_grain"] = "parked"
+    out["tenure_status"] = "parked"
+
+    out["vulnerability_source"] = "not_scoped"
+    out["vulnerability_grain"] = "not_scoped"
+    out["vulnerability_status"] = "not_scoped"
+
+    out["housing_stress_source"] = "statnuri_2082_128"
+    out["housing_stress_grain"] = "gu-year"
+    out["housing_stress_status"] = "missing_local_artifact"
+
+    out["development_pressure_source"] = "statnuri_6189_1"
+    out["development_pressure_grain"] = "national-year"
+    out["development_pressure_status"] = "missing_local_artifact"
+    out["development_pressure_spatial_variation"] = "none"
+
+    out["dashboard_claim_scope"] = "descriptive_physical_change_only"
+    out["composite_score_status"] = "not_computed"
+    return out
+
+
+def merge_optional_unsold(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return df
+    unsold = pd.read_parquet(path).copy()
+    required = {"lawd_cd", "year"}
+    missing = required - set(unsold.columns)
+    if missing:
+        raise ValueError(f"unsold panel missing required columns: {sorted(missing)}")
+    unsold["lawd_cd"] = unsold["lawd_cd"].astype(str)
+    unsold["year"] = unsold["year"].astype(int)
+    value_cols = [c for c in unsold.columns
+                  if c.startswith("statnuri_unsold_")]
+    out = df.merge(
+        unsold[["lawd_cd", "year", *value_cols]],
+        on=["lawd_cd", "year"],
+        how="left",
+    )
+    out["housing_stress_status"] = np.where(
+        out[value_cols].notna().any(axis=1), "live", "missing_join_row")
+    return out
+
+
+def merge_optional_redev(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return df
+    redev = pd.read_parquet(path).copy()
+    if "year" not in redev.columns:
+        raise ValueError("redevelopment intensity panel missing required column: year")
+    redev["year"] = redev["year"].astype(int)
+    value_cols = [c for c in redev.columns
+                  if c.startswith("national_redevelopment_intensity_")]
+    out = df.merge(redev[["year", *value_cols]], on="year", how="left")
+    out["development_pressure_status"] = np.where(
+        out[value_cols].notna().any(axis=1), "live", "missing_join_row")
+    return out
+
+
+def select_columns(df: pd.DataFrame) -> pd.DataFrame:
+    id_cols = [
+        "emd_cd",
+        "dong_name_kr",
+        "lawd_cd",
+        "gu_name",
+        "year",
+        "centroid_lat",
+        "centroid_lon",
+        "polygon_effective_date",
+    ]
+    physical_cols = [
+        "physical_embedding_norm",
+        "physical_yoy_year_pair",
+        "physical_yoy_angular",
+        "physical_yoy_cosine_dist",
+        "physical_yoy_euclid",
+        "physical_yoy_angular_gu_z",
+        "physical_yoy_angular_gu_rank_desc",
+        "physical_yoy_angular_gu_percentile_desc",
+        "physical_2022_artifact_flag",
+        "physical_source",
+        "physical_grain",
+        "physical_status",
+        "physical_artifact_policy",
+    ]
+    block_status_cols = [
+        "tenure_source",
+        "tenure_grain",
+        "tenure_status",
+        "vulnerability_source",
+        "vulnerability_grain",
+        "vulnerability_status",
+        "housing_stress_source",
+        "housing_stress_grain",
+        "housing_stress_status",
+        "development_pressure_source",
+        "development_pressure_grain",
+        "development_pressure_status",
+        "development_pressure_spatial_variation",
+        "dashboard_claim_scope",
+        "composite_score_status",
+    ]
+    optional_cols = [
+        c for c in df.columns
+        if c.startswith("statnuri_unsold_")
+        or c.startswith("national_redevelopment_intensity_")
+    ]
+    emb_cols = [c for c in EMBED_COLS if c in df.columns]
+    keep = [c for c in [*id_cols, *physical_cols, *optional_cols,
+                        *block_status_cols, *emb_cols] if c in df.columns]
+    return df[keep].sort_values(["lawd_cd", "emd_cd", "year"]).reset_index(drop=True)
+
+
+def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
+    errors: list[str] = []
+    warnings: list[str] = []
+    n_dongs = int(df["emd_cd"].nunique())
+    expected_rows = n_dongs * len(years)
+    duplicate_pairs = int(df.duplicated(["emd_cd", "year"]).sum())
+    missing_pairs = {
+        (emd, year)
+        for emd in df["emd_cd"].unique()
+        for year in years
+    } - {
+        (row.emd_cd, int(row.year))
+        for row in df[["emd_cd", "year"]].itertuples(index=False)
+    }
+
+    if len(df) != expected_rows:
+        errors.append(f"row count {len(df)} != expected {expected_rows}")
+    if duplicate_pairs:
+        errors.append(f"duplicate emd_cd/year rows: {duplicate_pairs}")
+    if missing_pairs:
+        errors.append(f"missing emd_cd/year pairs: {len(missing_pairs)}")
+    if df[EMBED_COLS].isna().sum().sum() != 0:
+        errors.append("embedding cells contain nulls")
+
+    yoy_null = df["physical_yoy_angular"].isna()
+    if set(df.loc[yoy_null, "year"].unique()) != {min(years)}:
+        errors.append("YoY nulls are not limited to the first panel year")
+
+    flag_count = int(df["physical_2022_artifact_flag"].sum())
+    if flag_count != n_dongs:
+        errors.append(
+            f"2022 artifact flags {flag_count} != n_dongs {n_dongs}")
+
+    prohibited_cols = [
+        c for c in df.columns
+        if any(token in c.lower() for token in PROHIBITED_SUBSTRINGS)
+        and c != "composite_score_status"
+    ]
+    if prohibited_cols:
+        errors.append(f"prohibited forecast/model columns present: {prohibited_cols}")
+
+    expected_status = {
+        "tenure_status": "parked",
+        "vulnerability_status": "not_scoped",
+        "housing_stress_status": "missing_local_artifact",
+        "development_pressure_status": "missing_local_artifact",
+        "composite_score_status": "not_computed",
+    }
+    for col, expected in expected_status.items():
+        actual = sorted(df[col].astype(str).unique().tolist())
+        if actual != [expected]:
+            if "missing_local_artifact" in expected and "live" in actual:
+                warnings.append(f"{col} includes live artifact rows: {actual}")
+            else:
+                errors.append(f"{col} expected {expected}, got {actual}")
+
+    return {
+        "rows": int(len(df)),
+        "n_dongs": n_dongs,
+        "years": sorted(df["year"].unique().astype(int).tolist()),
+        "duplicate_pairs": duplicate_pairs,
+        "missing_pairs_count": len(missing_pairs),
+        "artifact_2022_flag_count": flag_count,
+        "errors": errors,
+        "warnings": warnings,
+        "pass": not errors,
+    }
+
+
+def load_qa_summary(path: Path) -> dict:
+    if not path.exists():
+        return {"status": "missing"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - defensive summary only
+        return {"status": "unreadable", "error": str(exc)}
+
+
+def print_summary(contract: pd.DataFrame, validation: dict, qa: dict,
+                  output: Path) -> None:
+    print("Dashboard pilot contract:")
+    print(f"  rows: {validation['rows']}  dongs: {validation['n_dongs']}  "
+          f"years: {validation['years']}")
+    print(f"  2022 artifact flags: {validation['artifact_2022_flag_count']}")
+    by_gu = (contract.groupby(["lawd_cd", "gu_name"])["emd_cd"]
+             .nunique()
+             .reset_index(name="n_dongs"))
+    for row in by_gu.itertuples(index=False):
+        print(f"  {row.gu_name} ({row.lawd_cd}): {row.n_dongs} dongs")
+
+    if "artifact_2022" in qa:
+        overall = qa["artifact_2022"]["overall"]
+        print("  prior QA artifact ratio: "
+              f"{overall['angular_ratio']:.3f} "
+              f"(share max is 2021-2022: "
+              f"{overall['share_max_is_2021_2022']:.3f})")
+
+    for warning in validation["warnings"]:
+        print(f"[warning] {warning}")
+    if validation["errors"]:
+        print("\nFATAL contract validation errors:", file=sys.stderr)
+        for error in validation["errors"]:
+            print(f"  - {error}", file=sys.stderr)
+    else:
+        print(f"\nContract written: {output}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+    ap = argparse.ArgumentParser(
+        description="Build a non-forecast dashboard data contract from the "
+                    "completed legal-dong AlphaEarth pilot.")
+    ap.add_argument("--alphaearth", default=str(DEFAULT_ALPHAEARTH))
+    ap.add_argument("--qa", default=str(DEFAULT_QA))
+    ap.add_argument("--unsold", default=str(DEFAULT_UNSOLD))
+    ap.add_argument("--redev", default=str(DEFAULT_REDEV))
+    ap.add_argument("--output", default=str(DEFAULT_OUTPUT))
+    args = ap.parse_args(argv)
+
+    panel = load_alphaearth(Path(args.alphaearth))
+    contract = physical_metrics(panel)
+    contract = add_status_columns(contract)
+    contract = merge_optional_unsold(contract, Path(args.unsold))
+    contract = merge_optional_redev(contract, Path(args.redev))
+    contract = select_columns(contract)
+
+    validation = validate_contract(contract, YEARS)
+    if validation["pass"]:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        contract.to_parquet(output, index=False)
+    else:
+        output = Path(args.output)
+
+    qa = load_qa_summary(Path(args.qa))
+    print_summary(contract, validation, qa, output)
+    return 0 if validation["pass"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

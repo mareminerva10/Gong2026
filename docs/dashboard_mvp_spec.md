@@ -47,10 +47,10 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 
 ## 4. Current data status by block
 
-| Block | Variable(s) | Source | Grain | Status (2026-05-26) |
+| Block | Variable(s) | Source | Grain | Status (2026-05-27) |
 |---|---|---|---|---|
 | 1 Tenure pressure | `wolse_ratio`, `n_wolse`, `n_jeonse`, `median_deposit_per_m2`, `median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` OR StatNuri tenure-split form | gu × month (target) | **PARKED** — see [B1] |
-| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs + completed 마포구/강남구 pilot cache**; full-Seoul expansion gated on pilot acceptance |
+| 2 Physical change | `physical_embedding_norm`, `physical_yoy_angular`, `physical_yoy_cosine_dist`, `physical_yoy_euclid`, within-gu anomaly rank/z-score; **not** the rejected 1-D axis | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | legal-dong × year | **LIVE — completed 마포구+강남구 pilot cache and dashboard contract**; full-Seoul expansion requires explicit authorization |
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
 | 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |
@@ -72,7 +72,7 @@ A signal's native grain dictates where and how it may be rendered:
 
 ## 6. Provenance / status columns (panel-level)
 
-Following the established pattern (`embed_mode`, `wolse_source` already on every model-panel row), every panel row should carry the following block-level provenance fields. These are spec-only here; concrete population is a future code task in a separate commit.
+Following the established pattern (`embed_mode`, `wolse_source` already on every model-panel row), every panel row should carry the following block-level provenance fields. The pilot implementation now populates these fields in `data/dashboard_pilot_contract.parquet` via `dashboard_pilot_contract.py`.
 
 Per-row fields, by block:
 
@@ -90,7 +90,19 @@ Per-row fields, by block:
 - `development_pressure_status` — `live`
 - `development_pressure_spatial_variation` — `none`, `gu`, `dong` (currently `none`)
 
-When code lands, these should be string-valued columns so they survive merges and round-trip through parquet without dtype acrobatics. They are deliberately not enums.
+These should be string-valued columns so they survive merges and round-trip through parquet without dtype acrobatics. They are deliberately not enums.
+
+### Pilot contract implementation (2026-05-27)
+
+`dashboard_pilot_contract.py` is the first concrete dashboard handoff table. It reads the completed legal-dong AlphaEarth pilot and writes `data/dashboard_pilot_contract.parquet` (gitignored). The contract has 320 rows (40 dongs × 8 years), keeps 64 embedding bands for auditability, and adds descriptive Block 2 metrics plus explicit status columns for every other block.
+
+Critical implementation choices:
+
+- 2017 has null YoY metrics by construction; all later years have YoY metrics.
+- 2022 rows carry `physical_2022_artifact_flag=True` because they represent the 2021→2022 transition.
+- Block 1 tenure and Block 3 vulnerability are status-marked, not zero-filled.
+- Block 4a/4b are status-marked as `missing_local_artifact` in this worktree unless their parquet artifacts are present at build time.
+- No forecast, probability, composite score, or displacement-risk output is computed.
 
 ## 7. AlphaEarth 2022 artifact policy
 
@@ -131,7 +143,8 @@ Use the final chosen dong geography end-to-end (either 법정동 or 행정동, *
 | B3 | No spatial companion for Block 4 (permits / completions / 정비구역 GIS not yet sourced) | PROJECT-SCOPING | Block 4 gains spatial development variance |
 | B4 | Polygon source and pilot manifest | RESOLVED 2026-05-27 | D001 AL EMD legal-dong source selected; 마포구+강남구 pilot manifest implemented |
 | B5 | Earth Engine reduction cost not estimated; ~3,392 polygon-year reductions implied at full Seoul | RESOLVED 2026-05-27 | Pilot run completed: 320 polygon-years in 677.9s (~2.12s each); full-Seoul runtime still needs explicit authorization |
+| B6 | Dashboard handoff contract missing | RESOLVED 2026-05-27 | `dashboard_pilot_contract.py` emits a non-forecast, provenance-rich pilot table for UI/API work |
 
-Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 and B5 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is explicit product authorization after reviewing the completed pilot QA. B2 is independent and lowest-priority for the MVP.
+Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4, B5, and B6 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is explicit product authorization after reviewing the completed pilot QA. B2 is independent and lowest-priority for the MVP.
 
 The MVP can ship descriptively with Blocks 4a + 4b live and Blocks 1, 2, 3, 4c marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.

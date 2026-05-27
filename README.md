@@ -66,6 +66,7 @@ molit_unsold_client.py   시·군·구별 미분양현황 monthly probe + Seoul 
 legal_dong_polygons.py   D001 AL EMD loader + 마포구/강남구 pilot polygon manifest builder
 seoul_pilot_extract.py   resumable AlphaEarth extractor for the 마포구/강남구 pilot manifest
 seoul_pilot_qa.py        QA report for pilot completeness, variance, 2022 artifact, and overlap checks
+dashboard_pilot_contract.py descriptive dashboard handoff table for the completed AlphaEarth pilot
 docs/                    methodology and scope specs (committed; see dashboard_mvp_spec, full_seoul_expansion_scope)
 archive/                 superseded code retained for reference
 data/labeled_cases.csv   hand-labeled cases (tracked)
@@ -83,6 +84,7 @@ outputs/                 generated plots (gitignored)
 | Gu-level unsold-housing stress control | implemented; 96 monthly pulls (2017-01..2024-12) over Seoul's 25 gus; annual mean/max/Dec; joined into `data/dong_year_model_panel.parquet` by `lawd_cd × year` |
 | Legal-dong polygon pilot manifest | implemented; loads NSDI D001 AL EMD snapshot (pinned `AL_D001_00_20260509(EMD)`), reprojects EPSG:5186→4326, filters to 마포구+강남구 (40 dongs), writes `data/pilot_legal_dong_manifest.parquet`. Canonical `dong_code` repair is complete (0/12 mismatches); 3 lat/lon-not-contained proxy-center cases remain as non-fatal `[data-QA]` warnings |
 | AlphaEarth pilot extractor | implemented as `seoul_pilot_extract.py`; full 40-dong × 8-year pilot complete (320/320 rows, 0 missing) with resumable per-call cache under `data/seoul_pilot_alphaearth_cache/`; full run took 677.9s (~2.12s per polygon-year). `seoul_pilot_qa.py` passes completeness and within-gu variance, reproduces the 2021→2022 artifact, and compares the four overlap cases to the legacy 1km-proxy EE panel through the old-code map |
+| Dashboard pilot contract | implemented as `dashboard_pilot_contract.py`; writes `data/dashboard_pilot_contract.parquet` (gitignored) with 320 rows, descriptive AlphaEarth physical-change metrics, 2022-artifact flags, within-gu anomaly ranks/z-scores, and explicit parked/missing statuses for tenure, vulnerability, unsold, and redevelopment blocks. No forecast, probability, or composite score is computed |
 | 재건축 (recon) annual table | granted but empty at style_num=1; parked pending portal-listed alternatives |
 | Data.go.kr 전월세 live pull | scaffolded; LAWD_CD extraction fixed for 8-digit codes; blocked on data.go.kr-decoded service key (StatNuri key returns 401 on `apis.data.go.kr`) |
 | Synthetic mock pipeline | works end-to-end; perfect LOO is by construction, not by evidence |
