@@ -60,7 +60,7 @@ Primary analytical geography for the pilot and for all downstream rent/housing j
 
 **Polygon source status (2026-05-27): on-disk schema confirmed; primary source revised.**
 
-The actually-available official file family is the **NSDI D001 monthly AL EMD snapshot series** distributed through `data.go.kr 15045881` / VWorld `dsId=21` (국토교통부 일별 법정구역 정보) — not the static `dsId=30603` bulk-file we previously thought was primary. The user has six months of monthly snapshots (Dec 2025 – May 2026) plus the prior half-year on disk. The pilot pins to **`AL_D001_00_20251204(EMD)`** as the working snapshot.
+The actually-available official file family is the **NSDI D001 monthly AL EMD snapshot series** distributed through `data.go.kr 15045881` / VWorld `dsId=21` (국토교통부 일별 법정구역 정보) — not the static `dsId=30603` bulk-file we previously thought was primary. The user has six months of monthly snapshots (Dec 2025 – May 2026) plus the prior half-year on disk. The pilot pins to **`AL_D001_00_20260509(EMD)`** as the working snapshot.
 
 The earlier `data.go.kr 15029173` LINK record remains useful as license/lineage attestation but is reclassified to a secondary tier.
 
@@ -68,7 +68,7 @@ Research outcome:
 
 | Tier | Source | Geography | License | Reproducibility | Vintage | Decision |
 |---|---|---|---|---|---|---|
-| **Primary (working file source)** | **NSDI D001 monthly AL EMD snapshot via `data.go.kr 15045881` / VWorld `dsId=21`** | 법정동 (8-digit A1), national | KOGL — 이용허락범위 제한 없음 (per 15029173 attestation) | Monthly + daily distribution; user has 12 monthly snapshots on disk | Pinned snapshot: **`AL_D001_00_20251204(EMD)`** | **Resolved (on-disk schema confirmed 2026-05-27)** |
+| **Primary (working file source)** | **NSDI D001 monthly AL EMD snapshot via `data.go.kr 15045881` / VWorld `dsId=21`** | 법정동 (8-digit A1), national | KOGL — 이용허락범위 제한 없음 (per 15029173 attestation) | Monthly + daily distribution; user has 12 monthly snapshots on disk | Pinned snapshot: **`AL_D001_00_20260509(EMD)`** | **Resolved (on-disk schema confirmed 2026-05-27)** |
 | Documented bulk-file alternate | VWorld 행정구역_읍면동(법정동), `dsId=30603` | 법정동, national | KOGL | VWorld bulk-download interface | Active | Use if D001 family becomes unavailable |
 | LINK / lineage attestation | `data.go.kr` `15029173` — 전국법정구역(읍면동)정보표준데이터 | 법정동, national (LINK record) | KOGL attestation | Metadata page; LINK to VWorld | Modified 2024-10-30 | License/lineage record; not a download target |
 | Backup | NSDI 오픈마켓 `dataset/15145` — 행정구역_읍면동(법정동) | 법정동, national | Government open | Portal navigation | Recent | Same authoritative source via a third portal |
@@ -81,7 +81,7 @@ Rationale for the primary pick:
 
 - D001 EMD is the actually-distributed monthly+daily official feed for legal-dong polygons.
 - The user has 12 monthly snapshots on disk (Jun 2025 – May 2026), so the file lookup is fully reproducible without any further portal navigation.
-- Pinning to a single monthly snapshot (`AL_D001_00_20251204(EMD)`) gives a stable boundary state across the panel; daily CH delta files exist for future date-specific reconstruction but are **not used for the MVP pilot**.
+- Pinning to a single monthly snapshot (`AL_D001_00_20260509(EMD)`) gives a stable boundary state across the panel; daily CH delta files exist for future date-specific reconstruction but are **not used for the MVP pilot**.
 - License attestation on the 15029173 LINK page (`이용허락범위: 제한 없음`) covers the same data source — KOGL-compatible for repo/dashboard use.
 
 ### On-disk schema confirmation (2026-05-27)
@@ -109,9 +109,9 @@ Inspected `AL_D001_00_20260509(EMD)` (the most recent monthly snapshot — schem
 
 The earlier docs said `EMD_CD` would be a 10-digit code and the existing 8-digit `dong_code` would need zero-padding. The D001 EMD feed instead carries the canonical key directly as the 8-digit `A1`, which is the **same shape** as the existing `labeled_cases.csv.dong_code`. No padding step is needed.
 
-### Crosswalk finding — `labeled_cases.csv.dong_code` is unreliable for all 12 cases
+### Crosswalk finding — `labeled_cases.csv.dong_code` was repaired against canonical A1
 
-When all 12 labeled cases are crosswalked against the canonical `A1` by `(A2 Korean name, A4 lawd_cd)`, **every single CSV `dong_code` disagrees with `A1`**. The first-5-digit `lawd_cd` matches in 11 of 12 cases (Ikseon being the prior-known exception), but the last 3 digits diverge systematically — consistent with the CSV `dong_code` field carrying **행정동 (administrative-dong)** numbering while `dong_name_kr` carries **법정동 (legal-dong)** names. Examples:
+The initial D001 crosswalk found that all 12 labeled cases disagreed with the canonical `A1` when matched by `(A2 Korean name, A4 lawd_cd)`. The first-5-digit `lawd_cd` matched in 11 of 12 cases (Ikseon being the prior-known exception), but the last 3 digits diverged systematically — consistent with the CSV `dong_code` field carrying **행정동 (administrative-dong)** numbering while `dong_name_kr` carried **법정동 (legal-dong)** names. Historical examples before repair:
 
   - `Yeonnam`: CSV 11440710 → A1 11440124
   - `Mangwon`: CSV 11440730 → A1 11440123
@@ -122,8 +122,8 @@ When all 12 labeled cases are crosswalked against the canonical `A1` by `(A2 Kor
 **Implications for the loader and CSV repair:**
 
 - The loader must crosswalk by `(dong_name_kr, lawd_cd)` against `A1`, **not** by `dong_code`. Trusting `dong_code` would fail to resolve any case.
-- The eventual CSV repair commit affects **12 rows, not 1**. The existing `[data-QA]` Ikseon-only print is too narrow; once the loader can produce the canonical `A1` lookup, every CSV row needs to be reconciled and the repair must be reported, not memorized.
-- The existing `lawd_cd` column on `labeled_cases.csv` is correct for 11 of 12 cases (Ikseon's was already fixed); only the `dong_code` column is structurally wrong.
+- CSV repair landed in commit `2e322d1`: all 12 `dong_code` values now equal canonical `A1` and the loader reports **0/12 dong-code mismatches**.
+- The existing `lawd_cd` column on `labeled_cases.csv` remains the authoritative gu join key. Do not infer gu from legacy coordinates.
 
 ### CH daily deltas — out of scope for MVP
 
@@ -142,7 +142,7 @@ For each pilot polygon row, the loader must emit:
 - `lat`, `lon` — polygon centroid in EPSG:4326. Computed at load time; required for any downstream visualization.
 - `geometry` — polygon in EPSG:4326. Required by EE.
 
-**Labeled-case crosswalk rule** (peer-driven): when reconciling pilot polygons against `labeled_cases.csv`, key on `(dong_name_kr, lawd_cd)` against `(A2, A4)`. Surface any case whose CSV `dong_code` disagrees with the matched `A1` via a `[data-QA]` print. The existing Ikseon-only override print should be widened to report all such mismatches (currently 12 of 12 labeled cases mismatch).
+**Labeled-case crosswalk rule** (peer-driven): when reconciling pilot polygons against `labeled_cases.csv`, key on `(dong_name_kr, lawd_cd)` against `(A2, A4)`. Surface any case whose CSV `dong_code` disagrees with the matched `A1` via a `[data-QA]` print. After the canonical-code repair, the expected mismatch count is 0/12; three lat/lon proxy centers remain outside their matched legal-dong polygons and are reported as non-fatal `[data-QA]` warnings.
 
 ## 6. Earth Engine call-count and cache plan
 
@@ -203,7 +203,7 @@ Failing any of (1)–(4) blocks expansion outright. Failing (5) or (6) is a data
 | Decision | Options | Current default | Needed before code? |
 |---|---|---|---|
 | Dong geography | 법정동 / 행정동 | **법정동** (resolved 2026-05-26, §3) | Resolved |
-| Polygon source | D001 monthly AL EMD (data.go.kr 15045881 / VWorld dsId=21) / dsId=30603 bulk-file alternate / NSDI 15145 backup / southkorea/seoul-maps emergency mirror | **D001 monthly AL EMD, pinned to `AL_D001_00_20251204(EMD)`** (resolved 2026-05-27, §4; on-disk schema confirmed) | Resolved |
+| Polygon source | D001 monthly AL EMD (data.go.kr 15045881 / VWorld dsId=21) / dsId=30603 bulk-file alternate / NSDI 15145 backup / southkorea/seoul-maps emergency mirror | **D001 monthly AL EMD, pinned to `AL_D001_00_20260509(EMD)`** (resolved 2026-05-27, §4; on-disk schema confirmed) | Resolved |
 | Authoritative dong list | Derived from the chosen polygon source above (`A1` 8-digit code) | A1 field of D001 AL EMD | Resolved |
 | GCP project for EE | local user / gcloud ADC / service account | **`gong2026`** via gcloud ADC (resolved 2026-05-26, §10) | Resolved |
 | Artifact policy (per-row default) | flag / residualize / drop | flag for MVP | No, but must be recorded in panel |
@@ -228,6 +228,6 @@ Each `TBD` becomes a one-line follow-up commit when resolved, keeping decisions 
 
 ## Notes
 
-- This document is intentionally light on code references and heavy on decisions. The pilot module itself does not yet exist; it would live as a new file (`seoul_pilot_extract.py` or similar) that consumes the chosen polygon source and writes to the proposed cache layout.
+- This document is intentionally light on code references and heavy on decisions. The polygon manifest builder now exists as `legal_dong_polygons.py`; the next module is the AlphaEarth pilot extractor (`seoul_pilot_extract.py`) that consumes `data/pilot_legal_dong_manifest.parquet` and writes the proposed cache layout.
 - The companion full-Seoul-cost section will be added once a minute-per-polygon-year wall-clock figure exists from a small live test.
-- All four bold `TBD`s in the §9 table are now resolved. Pilot polygon-source download and pilot loader are the next concrete code work, gated on §8 acceptance criteria.
+- All four bold `TBD`s in the §9 table are now resolved. Pilot polygon-source download, canonical-code repair, and pilot manifest builder are complete; the next concrete code work is the AlphaEarth pilot extractor, gated on §8 acceptance criteria.

@@ -50,7 +50,7 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 | Block | Variable(s) | Source | Grain | Status (2026-05-26) |
 |---|---|---|---|---|
 | 1 Tenure pressure | `wolse_ratio`, `n_wolse`, `n_jeonse`, `median_deposit_per_m2`, `median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` OR StatNuri tenure-split form | gu × month (target) | **PARKED** — see [B1] |
-| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs only**; full-Seoul expansion gated on [B4][B5] |
+| 2 Physical change | `axis_projection` (currently raw); future: drift magnitude, angular change, local anomaly | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | dong × year | **LIVE — 12 labeled dongs only; pilot manifest ready for 마포구+강남구**; full-Seoul expansion gated on [B5] and pilot acceptance |
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
 | 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |
@@ -129,9 +129,9 @@ Use the final chosen dong geography end-to-end (either 법정동 or 행정동, *
 | B1 | 전월세 source not settled — data.go.kr key absent, no validated StatNuri tenure form yet | USER-SIDE | Block 1 unparked |
 | B2 | Vulnerability block has no source candidate | PROJECT-SCOPING | Block 3 unparked |
 | B3 | No spatial companion for Block 4 (permits / completions / 정비구역 GIS not yet sourced) | PROJECT-SCOPING | Block 4 gains spatial development variance |
-| B4 | Full-Seoul polygon source not selected (NSDI/SGIS) — 1km centroid boxes inadequate | PROJECT-SCOPING | Pilot can begin; full-Seoul expansion can be scoped |
+| B4 | Polygon source and pilot manifest | RESOLVED 2026-05-27 | D001 AL EMD legal-dong source selected; 마포구+강남구 pilot manifest implemented |
 | B5 | Earth Engine reduction cost not estimated; ~3,392 polygon-year reductions implied at full Seoul | PROJECT-SCOPING | Pilot must run first to estimate |
 
-Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 + B5 are gating for the Block 2 pilot. B2 is independent and lowest-priority for the MVP.
+Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4 is resolved; B5 and the pilot acceptance checks now gate any full-Seoul Block 2 expansion. B2 is independent and lowest-priority for the MVP.
 
 The MVP can ship descriptively with Blocks 4a + 4b live and Blocks 1, 2, 3, 4c marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.

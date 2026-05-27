@@ -9,8 +9,8 @@ Reads the NSDI D001 monthly AL EMD snapshot (distributed via
 filters to the pilot gus, and writes a GeoParquet manifest under
 `data/`. Crosswalks every labeled case in `data/labeled_cases.csv`
 against the canonical `A1` 법정동 code by `(dong_name_kr, lawd_cd)`
-and surfaces all `dong_code` mismatches as expected legacy-code
-differences — they are not fatal.
+and surfaces any `dong_code` mismatches as non-fatal legacy-code
+drift. After the canonical-code repair, the expected mismatch count is 0.
 
 This module does **no** Earth Engine calls, no model-panel changes,
 and no `labeled_cases.csv` repair. The mismatch report it prints is
@@ -46,9 +46,9 @@ Fatal (exit 1):
   are absent from `labeled_cases.csv`
 
 Non-fatal (printed as `[data-QA]` warnings, manifest still writes):
-- `labeled_cases.csv.dong_code != canonical A1` — currently expected
-  for all 12 labeled cases because the CSV `dong_code` column carries
-  행정동-style numbering, not the canonical 법정동 code.
+- `labeled_cases.csv.dong_code != canonical A1`. This should remain 0
+  after the canonical-code repair, but is kept as a guardrail for future
+  labeled-case additions or source refreshes.
 - `labeled_cases.csv` lat/lon is not contained in the matched 법정동
   polygon. These coordinates were used operationally as 1km
   proxy-box centers (see `prototype.write_polygons_if_absent`), not
