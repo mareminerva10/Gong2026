@@ -26,6 +26,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from legal_dong_polygons import SEOUL_GU_NAME
+
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -204,6 +206,40 @@ def variance_summary(panel: pd.DataFrame) -> dict:
     }
 
 
+def lawd_gu_consistency(panel: pd.DataFrame) -> dict:
+    """Verify that every panel row's `gu_name` agrees with the canonical
+    `SEOUL_GU_NAME[lawd_cd]` mapping from `legal_dong_polygons`. The
+    consistency is enforced by construction in
+    `legal_dong_polygons.build_pilot_manifest` (both fields derive from
+    the same shapefile field `A4`), but asserting it here catches any
+    regression — e.g. a manual panel mutation or a schema change that
+    decouples the two columns.
+
+    Maps to §8 acceptance criterion #4a in
+    `docs/full_seoul_expansion_scope.md`.
+    """
+    lawd = panel["lawd_cd"].astype(str)
+    expected_gu = lawd.map(SEOUL_GU_NAME)
+    actual_gu = panel["gu_name"].astype(str)
+
+    unknown_mask = expected_gu.isna()
+    mismatch_mask = (~unknown_mask) & (expected_gu != actual_gu)
+
+    return {
+        "n_rows": int(len(panel)),
+        "n_unknown_lawd": int(unknown_mask.sum()),
+        "n_mismatch": int(mismatch_mask.sum()),
+        "unknown_lawd_examples": (
+            panel.loc[unknown_mask, ["emd_cd", "dong_name_kr", "lawd_cd"]]
+            .head(10).to_dict("records")),
+        "mismatch_examples": (
+            panel.loc[mismatch_mask,
+                       ["emd_cd", "dong_name_kr", "lawd_cd", "gu_name"]]
+            .head(10).to_dict("records")),
+        "pass": (not unknown_mask.any()) and (not mismatch_mask.any()),
+    }
+
+
 def overlap_summary(panel: pd.DataFrame, legacy_path: Path) -> dict:
     present = sorted(set(panel["emd_cd"]) & set(REQUIRED_OVERLAPS))
     out = {
@@ -275,6 +311,16 @@ def print_report(report: dict) -> None:
     print(f"  median std-vector norm: {v['median_std_vector_norm']:.6f}")
     print(f"  pass: {v['pass']}")
 
+    lgc = report["lawd_gu_consistency"]
+    print("\nlawd_cd ↔ gu_name consistency (§8 #4a):")
+    print(f"  rows: {lgc['n_rows']}  mismatches: {lgc['n_mismatch']}  "
+          f"unknown lawd_cd: {lgc['n_unknown_lawd']}")
+    print(f"  pass: {lgc['pass']}")
+    for ex in lgc["mismatch_examples"][:3]:
+        print(f"    mismatch: {ex}")
+    for ex in lgc["unknown_lawd_examples"][:3]:
+        print(f"    unknown lawd_cd: {ex}")
+
     a = report["artifact_2022"]["overall"]
     print("\n2021-2022 artifact diagnostic:")
     print(f"  share max YoY pair is 2021-2022: {a['share_max_is_2021_2022']:.3f}")
@@ -312,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "panel": str(Path(args.panel)),
         "completeness": completeness(panel, Path(args.manifest), YEARS),
+        "lawd_gu_consistency": lawd_gu_consistency(panel),
         "within_gu_variance": variance_summary(panel),
         "artifact_2022": artifact_summary(yoy),
         "overlap": overlap_summary(panel, Path(args.legacy_panel)),
@@ -325,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
 
     hard_fail = (
         not report["completeness"]["pass"]
+        or not report["lawd_gu_consistency"]["pass"]
         or not report["within_gu_variance"]["pass"]
         or len(report["overlap"]["present_in_pilot"]) != 4
     )
