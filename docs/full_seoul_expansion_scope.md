@@ -289,6 +289,37 @@ Each `TBD` becomes a one-line follow-up commit when resolved, keeping decisions 
 - **Quota policy**: pilot-only EE reductions until the 마포구 + 강남구 acceptance checks in §8 pass. Full-Seoul expansion requires explicit authorization after pilot completion.
 - **Smoke test (2026-05-26)**: `ee.Initialize(project='gong2026')` + a live `bandNames` call on AlphaEarth 2024 returned `['A00']`. Recorded as the gate-resolution evidence.
 
+## 11. Full-Seoul safety harness (2026-05-28)
+
+The full-Seoul AlphaEarth extraction step (Seoul 467 legal dongs × 8 years = **3,736 reductions**; ~46–56 min wall-clock at the pilot's 0.81 s/fresh) is large enough to warrant explicit guardrails on top of the implicit cache-and-resume safety from §8 #3.
+
+### Noncommercial-tier verification (user-side, prerequisite)
+
+Earth Engine compute under the noncommercial tiers is quota-bounded, not pay-as-you-go:
+
+- **Community tier**: 150 EECU-hours/month, free.
+- **Contributor tier**: 1,000 EECU-hours/month, requires a linked billing account, but EE compute/storage are not charged while the project remains noncommercial.
+- Exhausting quota puts EE in **restricted mode** (lower throughput), not silent billing.
+- Other Google Cloud services (Cloud Storage, BigQuery, Vertex AI, etc.) bill independently if enabled on the project.
+
+For Gong2026, the conservative planning envelope is **under 33 EECU-hours** for the full-Seoul run — well inside the Community tier's monthly cap, *assuming* `gong2026` is in fact registered noncommercially. Before authorizing full-Seoul, confirm in the Earth Engine project settings UI that `gong2026` shows a noncommercial tier label. The gcloud ADC + `ee.Initialize` flow does **not** by itself imply noncommercial registration.
+
+### In-code harness (`seoul_pilot_extract.py`)
+
+Two CLI flags act as belt-and-suspenders kill switches independent of EE-side quota enforcement:
+
+- **`--max-fresh N`** — hard cap on fresh EE calls per run; cache hits do not count. Stops cleanly before the next `reduceRegion` when the cap is reached.
+- **`--max-wall-s T`** — hard cap on wall-clock seconds per run. Pre-EE-call gate; never interrupts an in-flight `reduceRegion`.
+
+Both fire **before** the next EE call is dispatched, so an in-flight reduction always completes cleanly and its result is cached. Re-running the extractor picks up from where the harness stopped (the `cache.exists()` check plus the atomic write from §8 #3 preserve all completed rows).
+
+Recommended caps for the full-Seoul run:
+
+- `--max-fresh 4000` (slightly above the expected 3,736; trips only on runaway behaviour)
+- `--max-wall-s 4500` (75 minutes, ~1.3× the projected wall at pilot rate)
+
+References: [Earth Engine noncommercial tiers](https://developers.google.com/earth-engine/guides/noncommercial_tiers), [Earth Engine pricing](https://cloud.google.com/earth-engine/pricing).
+
 ## Notes
 
 - This document is intentionally light on code references and heavy on decisions. The polygon manifest builder exists as `legal_dong_polygons.py`; the AlphaEarth pilot extractor exists as `seoul_pilot_extract.py` and consumes `data/pilot_legal_dong_manifest.parquet`.

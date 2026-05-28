@@ -201,6 +201,8 @@ def fetch_embeddings(
     retries: int,
     limit: int | None,
     cost_log: Path | None = None,
+    max_fresh: int | None = None,
+    max_wall_s: float | None = None,
 ) -> pd.DataFrame:
     if not offline and not dry_run:
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -215,6 +217,11 @@ def fetch_embeddings(
     pulled = 0
     planned = 0
     total = len(tasks)
+    # Safety harness state: count fresh pulls and elapsed wall-time
+    # against the optional caps. Both are pre-EE-call gates — they stop
+    # the loop *before* the next reduceRegion would fire, never mid-flight.
+    fresh_run_started = time.perf_counter()
+    stopped_by_harness: str | None = None
 
     for row, year in tasks:
         emd_cd = str(row.emd_cd)
@@ -229,6 +236,16 @@ def fetch_embeddings(
         if dry_run:
             planned += 1
             continue
+
+        # Safety-harness pre-checks (before any EE call). Hitting either
+        # cap stops the run cleanly; the per-call cache plus atomic write
+        # mean re-running picks up where we stopped.
+        if max_fresh is not None and pulled >= max_fresh:
+            stopped_by_harness = f"reached --max-fresh ({max_fresh})"
+            break
+        if max_wall_s is not None and (time.perf_counter() - fresh_run_started) >= max_wall_s:
+            stopped_by_harness = f"reached --max-wall-s ({max_wall_s})"
+            break
 
         vec = None
         last_error: Exception | None = None
@@ -277,6 +294,12 @@ def fetch_embeddings(
     else:
         print(f"  embeddings: {pulled} fresh, {cached} cached, "
               f"{len(missing)} missing  (target {total})")
+    if stopped_by_harness is not None:
+        print(f"  HARNESS STOP: {stopped_by_harness}; "
+              f"fresh this run={pulled}; "
+              f"wall={time.perf_counter() - fresh_run_started:.1f}s. "
+              "Re-run to continue (cache + atomic writes preserve progress).",
+              file=sys.stderr)
     if missing:
         print("  missing cache/result pairs:")
         for emd_cd, year in missing[:20]:
@@ -340,6 +363,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="seconds to sleep after fresh EE pulls")
     ap.add_argument("--retries", type=int, default=2,
                     help="retry count for transient EE reduceRegion errors")
+    ap.add_argument("--max-fresh", type=int, default=None,
+                    help="safety harness: hard cap on fresh EE calls per run "
+                         "(cache hits do not count). Stops cleanly; re-run to continue.")
+    ap.add_argument("--max-wall-s", type=float, default=None,
+                    help="safety harness: hard cap on wall-clock seconds per run. "
+                         "Pre-EE-call gate; never interrupts an in-flight reduceRegion.")
     args = ap.parse_args(argv)
 
     years = parse_years(args.years)
@@ -374,6 +403,8 @@ def main(argv: list[str] | None = None) -> int:
         retries=args.retries,
         limit=args.limit,
         cost_log=cost_log,
+        max_fresh=args.max_fresh,
+        max_wall_s=args.max_wall_s,
     )
     elapsed_s = time.perf_counter() - started
     validate_panel(df, expected)
