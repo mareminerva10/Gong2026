@@ -409,13 +409,18 @@ def main(argv: list[str] | None = None) -> int:
     elapsed_s = time.perf_counter() - started
     validate_panel(df, expected)
     print(f"  elapsed: {elapsed_s:.1f}s  "
-          f"({elapsed_s / max(expected, 1):.2f}s per target row)")
+          f"({elapsed_s / max(len(df), 1):.2f}s per returned row)")
     output_arg_was_set = args.output is not None
     output_path = Path(args.output) if output_arg_was_set else DEFAULT_OUTPUT
+    bounded_run = (
+        args.limit is not None
+        or args.max_fresh is not None
+        or args.max_wall_s is not None
+    )
     should_write_output = (
         not args.dry_run
         and not df.empty
-        and (output_arg_was_set or args.limit is None or len(df) == full_expected)
+        and (output_arg_was_set or not bounded_run or len(df) == full_expected)
     )
     if should_write_output:
         output = output_path
@@ -424,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         df.to_parquet(output, index=False)
         print(f"Panel written: {output} rows={len(df)} cols={len(df.columns)}")
     elif not args.dry_run and not df.empty:
-        print("Panel output skipped for bounded --limit run; per-call cache was written.")
+        print("Panel output skipped for bounded run; per-call cache was written.")
     return 0
 
 
