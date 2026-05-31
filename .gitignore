@@ -30,3 +30,6 @@ outputs/
 
 # Local dashboard process marker
 .dashboard_server.pid
+
+# IDE configuration
+.idea/
