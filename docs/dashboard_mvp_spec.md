@@ -78,7 +78,7 @@ Per-row fields, by block:
 
 - `physical_source` — e.g. `alphaearth_ee`, `synth`
 - `physical_grain` — e.g. `dong-year`
-- `physical_artifact_policy` — one of `{residualized_tokyo_taipei, drop_2022, flag_2022}` (see §7)
+- `physical_artifact_policy` — analytical policy: one of `{raw, tokyo_taipei_offset, metric_year_fe}` (default `metric_year_fe` at `pilot_cross_dong` scope; see §7). The strict downstream `drop_2022` rule and the UI `flag_2022` rule are consumer/renderer conventions layered on top of the analytical policy, not stored values of this field.
 - `tenure_source` — `data_go_kr_rtms`, `statnuri_<form>`, `synth`, `parked`
 - `tenure_grain` — `gu-month`, `dong-month`, `parked`
 - `tenure_status` — `live`, `mock`, `parked`
@@ -110,14 +110,23 @@ Critical implementation choices:
 
 All Block 2 metrics inherit the 2021→2022 regional common-mode shift documented in `project-2022-artifact-audit-findings` (full N=30: 2022 hot in Seoul + Osaka, clean in Tokyo + Taipei). Drift magnitude, angular change, and local-anomaly metrics all inherit this contamination, not only the rejected 1-D axis.
 
-**MVP default policy: flag.** Any AlphaEarth-derived value computed across a 2021→2022 transition (or its derivative across that window) must be rendered with a visible 2022-artifact flag in the UI and in any exported tables.
+### Three-tier consumption policy
 
-Two stricter alternatives are available and selectable per deployment:
+The project keeps `raw`, `tokyo_taipei_offset`, and `metric_year_fe` physical-change metrics side by side in `seoul_physical_residualized.py`. The **default analytical policy is `metric_year_fe` at `pilot_cross_dong` scope**. However, because 2021–2022 remains partially elevated in 강남구 after centering (5 of 14 dongs along the Tehran Road corridor still top the 2021–22 list under `metric_year_fe`, while 압구정동 goes negative — see `312693e`), the project enforces a layered policy:
 
-- **Residualize**: subtract cumulative Tokyo/Taipei anchor drift from each Seoul row before computing the metric. Infrastructure cached under `data/audit_cache/` (60 polygons × 8 years) and implemented in `axis_residualize.py`.
-- **Drop**: omit 2022 from the panel entirely. Loses one of eight years.
+- **Default analytical policy** — `metric_year_fe` at `pilot_cross_dong` scope. The relative-anomaly feature exposed to descriptive consumers.
+- **Strict downstream / alarm policy** — any EWS, alarm, or forecast-like consumer **must drop 2021–2022 transition rows** before producing its scalar. This is a consumer-layer rule (`drop_2022`), not a stored value of `physical_artifact_policy`.
+- **Dashboard display policy** — 2021–2022 rows may be rendered only with an explicit artifact flag (`physical_2022_artifact_flag=True`, red badge in `dashboard_app.py`).
 
-The `physical_artifact_policy` provenance field records which policy is active.
+Per-gu centering (`pilot_gu_cross_dong` scope) is **parked as sensitivity analysis only** — with N=14 강남구 dongs the per-gu median is too noisy to be the production default.
+
+### Available analytical policies
+
+- **`raw`** — no adjustment. Surfaces the artifact unmodified; only safe as a comparison reference.
+- **`tokyo_taipei_offset`** — subtract cumulative Tokyo+Taipei anchor drift from each Seoul row before computing the metric. **Recorded negative result** in `c22390c`: valid for axis-projection metrics but does not neutralize YoY angular distance, because angular distance is not translation-invariant. Do not consume for alarm/EWS purposes. Infrastructure cached under `data/audit_cache/` (60 polygons × 8 years), implemented in `axis_residualize.py`.
+- **`metric_year_fe`** — subtract cross-dong median of each metric within the same year-pair (YoY) or year (norm), at `pilot_cross_dong` scope. Interpretation: "anomaly relative to other pilot dongs in the same year-pair", not "artifact-free physical change". Verified at pilot in `312693e`: 마포구 share-max-2021-2022 drops to ~chance (0.115); 강남구 partial (0.357, above the strict 2×chance threshold 0.286).
+
+The `physical_artifact_policy` provenance field on every row records the active analytical policy. The strict `drop_2022` and UI `flag_2022` rules are layered on top by the consumer / renderer, not by the feature-layer producer.
 
 ## 8. Small-N constraints (binding)
 
