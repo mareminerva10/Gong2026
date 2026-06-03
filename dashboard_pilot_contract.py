@@ -34,6 +34,7 @@ DEFAULT_ALPHAEARTH = DATA / "seoul_pilot_alphaearth.parquet"
 DEFAULT_QA = DATA / "seoul_pilot_alphaearth_qa.json"
 DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
+DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
 DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
 
 YEARS = list(range(2017, 2025))
@@ -129,7 +130,12 @@ def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["physical_source"] = "alphaearth_ee"
     out["physical_grain"] = "legal-dong-year"
     out["physical_status"] = "live"
-    out["physical_artifact_policy"] = "flag_2022"
+    # Analytical policy per docs/dashboard_mvp_spec.md §7. The strict
+    # drop_2022 rule and the UI flag_2022 rule are consumer/renderer
+    # conventions layered on top; they are not stored values of this
+    # field. The `physical_2022_artifact_flag` boolean still carries
+    # the UI flag_2022 signal.
+    out["physical_artifact_policy"] = "metric_year_fe"
 
     out["tenure_source"] = "parked"
     out["tenure_grain"] = "parked"
@@ -173,6 +179,30 @@ def merge_optional_unsold(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     out["housing_stress_status"] = np.where(
         out[value_cols].notna().any(axis=1), "live", "missing_join_row")
     return out
+
+
+def merge_optional_residualized(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Merge the three-policy physical-change feature layer from
+    `seoul_physical_residualized.py` if its parquet is present. Adds
+    side-by-side `physical_{metric}_{policy}` columns for the three
+    artifact-handling policies (raw / tokyo_taipei_offset / metric_year_fe)
+    and the `metric_year_fe_scope` provenance. Does not overwrite
+    existing contract columns (dong_name_kr, lawd_cd, the legacy
+    non-policy-suffixed metrics, artifact_transition_flag, etc.)."""
+    if not path.exists():
+        return df
+    res = pd.read_parquet(path).copy()
+    res["emd_cd"] = res["emd_cd"].astype(str)
+    res["year"] = res["year"].astype(int)
+    policy_cols = [c for c in res.columns
+                   if c.startswith("physical_yoy_") and
+                   any(c.endswith(f"_{p}")
+                       for p in ("raw", "tokyo_taipei_offset", "metric_year_fe"))]
+    policy_cols += [c for c in res.columns
+                    if c.startswith("physical_embedding_norm_")]
+    keep = ["emd_cd", "year", *policy_cols, "metric_year_fe_scope"]
+    keep = [c for c in keep if c in res.columns]
+    return df.merge(res[keep], on=["emd_cd", "year"], how="left")
 
 
 def merge_optional_redev(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -250,8 +280,17 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
         if c.startswith("statnuri_unsold_")
         or c.startswith("national_redevelopment_intensity_")
     ]
+    # Policy-suffixed physical-change columns from the residualized layer.
+    policy_cols = [c for c in df.columns
+                   if (c.startswith("physical_yoy_")
+                       or c.startswith("physical_embedding_norm_"))
+                   and any(c.endswith(f"_{p}")
+                           for p in ("raw", "tokyo_taipei_offset",
+                                     "metric_year_fe"))]
+    if "metric_year_fe_scope" in df.columns:
+        policy_cols.append("metric_year_fe_scope")
     emb_cols = [c for c in EMBED_COLS if c in df.columns]
-    keep = [c for c in [*id_cols, *physical_cols, *optional_cols,
+    keep = [c for c in [*id_cols, *physical_cols, *policy_cols, *optional_cols,
                         *block_status_cols, *emb_cols] if c in df.columns]
     return df[keep].sort_values(["lawd_cd", "emd_cd", "year"]).reset_index(drop=True)
 
@@ -374,12 +413,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--qa", default=str(DEFAULT_QA))
     ap.add_argument("--unsold", default=str(DEFAULT_UNSOLD))
     ap.add_argument("--redev", default=str(DEFAULT_REDEV))
+    ap.add_argument("--residualized", default=str(DEFAULT_RESIDUALIZED))
     ap.add_argument("--output", default=str(DEFAULT_OUTPUT))
     args = ap.parse_args(argv)
 
     panel = load_alphaearth(Path(args.alphaearth))
     contract = physical_metrics(panel)
     contract = add_status_columns(contract)
+    contract = merge_optional_residualized(contract, Path(args.residualized))
     contract = merge_optional_unsold(contract, Path(args.unsold))
     contract = merge_optional_redev(contract, Path(args.redev))
     contract = select_columns(contract)

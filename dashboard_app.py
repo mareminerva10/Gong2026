@@ -24,7 +24,18 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONTRACT = HERE / "data" / "dashboard_pilot_contract.parquet"
+DEFAULT_MANIFEST = HERE / "data" / "pilot_legal_dong_manifest.parquet"
 
+# Base + policy-suffixed columns shipped to the dashboard. Policy-aware
+# metrics (physical_yoy_*, physical_embedding_norm) have their bare names
+# kept for legacy display plus three suffixed variants for policy switching.
+POLICY_SUFFIXES = ("raw", "tokyo_taipei_offset", "metric_year_fe")
+POLICY_AWARE_BASES = (
+    "physical_yoy_angular",
+    "physical_yoy_cosine_dist",
+    "physical_yoy_euclid",
+    "physical_embedding_norm",
+)
 DISPLAY_COLS = [
     "emd_cd",
     "dong_name_kr",
@@ -46,6 +57,7 @@ DISPLAY_COLS = [
     "physical_grain",
     "physical_status",
     "physical_artifact_policy",
+    "metric_year_fe_scope",
     "tenure_status",
     "vulnerability_status",
     "housing_stress_status",
@@ -60,10 +72,43 @@ DISPLAY_COLS = [
     "national_redevelopment_intensity_area_m2",
     "national_redevelopment_intensity_demolition_targets",
     "national_redevelopment_intensity_units_total",
-]
+] + [f"{base}_{p}" for base in POLICY_AWARE_BASES for p in POLICY_SUFFIXES]
 
 
-def load_payload(contract_path: Path) -> dict:
+def load_polygons(manifest_path: Path) -> dict:
+    """Return `{emd_cd: [[ring, ...], ...]}` where each ring is a list of
+    `[lon, lat]` pairs. Polygons and MultiPolygons are both flattened to
+    a list of rings; the SVG renderer uses fill-rule:evenodd to handle
+    holes. Returns {} if the manifest is missing — the dashboard then
+    falls back to centroid markers."""
+    if not manifest_path.exists():
+        return {}
+    import geopandas as gpd
+    gdf = gpd.read_parquet(manifest_path)
+    out: dict[str, list] = {}
+    for r in gdf.itertuples():
+        geom = r.geometry
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == "Polygon":
+            subs = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            subs = list(geom.geoms)
+        else:
+            continue
+        rings: list = []
+        for sub in subs:
+            rings.append([[float(x), float(y)]
+                          for x, y in sub.exterior.coords])
+            for hole in sub.interiors:
+                rings.append([[float(x), float(y)]
+                              for x, y in hole.coords])
+        out[str(r.emd_cd)] = rings
+    return out
+
+
+def load_payload(contract_path: Path,
+                 manifest_path: Path = DEFAULT_MANIFEST) -> dict:
     if not contract_path.exists():
         raise FileNotFoundError(
             f"missing dashboard contract: {contract_path}. "
@@ -74,6 +119,11 @@ def load_payload(contract_path: Path) -> dict:
     for col in view.select_dtypes(include=["float", "float64", "float32"]).columns:
         view[col] = view[col].round(6)
     records = view.replace({np.nan: None}).to_dict("records")
+    polygons = load_polygons(manifest_path)
+    policy_metric_cols_present = {
+        base: {p: f"{base}_{p}" in df.columns for p in POLICY_SUFFIXES}
+        for base in POLICY_AWARE_BASES
+    }
     summary = {
         "rows": int(len(df)),
         "dongs": int(df["emd_cd"].nunique()),
@@ -96,8 +146,22 @@ def load_payload(contract_path: Path) -> dict:
         },
         "artifact_2022_flags": int(df["physical_2022_artifact_flag"].sum()),
         "contract_path": str(contract_path),
+        "manifest_path": str(manifest_path) if manifest_path.exists() else None,
+        "polygon_count": len(polygons),
+        "policy_suffixes": list(POLICY_SUFFIXES),
+        "policy_aware_bases": list(POLICY_AWARE_BASES),
+        "policy_metric_cols_present": policy_metric_cols_present,
+        "metric_year_fe_scope": (
+            df["metric_year_fe_scope"].dropna().astype(str).iloc[0]
+            if "metric_year_fe_scope" in df.columns
+            and df["metric_year_fe_scope"].notna().any()
+            else None),
+        "default_policy": (
+            df["physical_artifact_policy"].dropna().astype(str).iloc[0]
+            if df["physical_artifact_policy"].notna().any()
+            else "metric_year_fe"),
     }
-    return {"summary": summary, "rows": records}
+    return {"summary": summary, "rows": records, "polygons": polygons}
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -162,7 +226,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(180px, 1fr) auto auto;
+      grid-template-columns: 120px 1fr 1fr auto;
       gap: 12px;
       align-items: end;
     }
@@ -212,11 +276,42 @@ INDEX_HTML = r"""<!doctype html>
     .badge.warn { border-color: #ead39b; background: #fff8e6; color: var(--amber); }
     .badge.off { border-color: #d7dde1; background: #f1f4f4; color: var(--muted); }
     .badge.artifact { border-color: #e8b7ad; background: #fff0ee; color: var(--red); }
+    .notice {
+      border-radius: 7px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .notice.artifact {
+      border: 1px solid #e8b7ad;
+      background: #fff0ee;
+      color: #8c2f25;
+    }
+    .notice.policy {
+      border: 1px solid #cfd9e1;
+      background: #eef3f7;
+      color: #294763;
+    }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .legend-bar {
+      flex: 1;
+      height: 10px;
+      border-radius: 5px;
+      background: linear-gradient(to right, rgb(35,122,87), rgb(29,111,134), rgb(61,100,163));
+    }
+    .legend-tick { min-width: 56px; text-align: center; }
     svg { width: 100%; display: block; }
     #mapSvg { height: 500px; border: 1px solid var(--line); border-radius: 8px; background: #fdfefe; }
-    .dot { stroke: #fff; stroke-width: 1.5; cursor: pointer; }
-    .dot:hover { stroke: #172126; stroke-width: 2; }
-    .dot.selected { stroke: #172126; stroke-width: 3; }
+    .poly { stroke: #ffffff; stroke-width: 0.8; cursor: pointer; transition: stroke-width 0.1s; }
+    .poly:hover { stroke: #172126; stroke-width: 1.6; }
+    .poly.selected { stroke: #172126; stroke-width: 2.4; }
+    .poly.artifact { stroke-dasharray: 3,2; }
     .chart { min-height: 270px; }
     .bar-row {
       display: grid;
@@ -270,6 +365,7 @@ INDEX_HTML = r"""<!doctype html>
     <section class="panel stack">
       <h2>Contract</h2>
       <p id="contractPath" class="subtle"></p>
+      <p id="manifestPath" class="subtle"></p>
       <p class="subtle">Descriptive physical-change layer. No forecast, probability, or composite score.</p>
     </section>
   </aside>
@@ -280,11 +376,19 @@ INDEX_HTML = r"""<!doctype html>
       </label>
       <label>Metric
         <select id="metricSelect">
-          <option value="physical_yoy_angular">YoY angular change</option>
-          <option value="physical_yoy_euclid">YoY Euclidean change</option>
-          <option value="physical_embedding_norm">Embedding norm</option>
-          <option value="statnuri_unsold_mean_units">Unsold mean units</option>
-          <option value="national_redevelopment_intensity_zone_count">Redevelopment zones</option>
+          <option value="physical_yoy_angular" data-policy-aware="true">YoY angular change (Block 2)</option>
+          <option value="physical_yoy_cosine_dist" data-policy-aware="true">YoY cosine distance (Block 2)</option>
+          <option value="physical_yoy_euclid" data-policy-aware="true">YoY Euclidean change (Block 2)</option>
+          <option value="physical_embedding_norm" data-policy-aware="true">Embedding norm (Block 2)</option>
+          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Unsold mean units (Block 4b, gu-year)</option>
+          <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
+        </select>
+      </label>
+      <label>Artifact policy
+        <select id="policySelect">
+          <option value="raw">raw — no adjustment</option>
+          <option value="tokyo_taipei_offset">tokyo_taipei_offset — anchor-residualized</option>
+          <option value="metric_year_fe" selected>metric_year_fe — relative anomaly (default)</option>
         </select>
       </label>
       <label>Gu
@@ -296,6 +400,16 @@ INDEX_HTML = r"""<!doctype html>
       </label>
     </section>
 
+    <section id="artifactNotice" class="notice artifact" style="display:none">
+      <strong>2021–2022 transition flagged.</strong>
+      2021–2022 is artifact-sensitive. Values are displayed for transparency but should not be used for alarm/EWS/forecast-like interpretation. See <code>docs/dashboard_mvp_spec.md</code> §7.
+    </section>
+
+    <section id="policyNotice" class="notice policy">
+      <strong id="policyNoticeTitle">Active policy: metric_year_fe (pilot_cross_dong)</strong>
+      <span id="policyNoticeBody">Metric-year-FE values show deviation from the pilot cross-dong median for the same year-pair. They remove common year-pair level shifts but may also remove real Seoul-wide shocks.</span>
+    </section>
+
     <section class="grid-3">
       <div class="panel kpi"><span class="subtle">Rows in view</span><strong id="kpiRows">—</strong></div>
       <div class="panel kpi"><span class="subtle">Median metric</span><strong id="kpiMedian">—</strong></div>
@@ -305,10 +419,16 @@ INDEX_HTML = r"""<!doctype html>
     <section class="grid-main">
       <div class="panel stack">
         <div>
-          <h2>Legal-Dong Map</h2>
-          <p class="subtle" id="mapCaption">Centroids colored by selected metric</p>
+          <h2>Legal-Dong Choropleth</h2>
+          <p class="subtle" id="mapCaption">Legal-dong polygons filled by selected metric under selected policy</p>
         </div>
         <svg id="mapSvg" role="img"></svg>
+        <div class="legend">
+          <span class="legend-tick" id="legendMin">—</span>
+          <span class="legend-bar"></span>
+          <span class="legend-tick" id="legendMax">—</span>
+          <span class="badge artifact" id="legendArtifact">2022 flag</span>
+        </div>
       </div>
       <div class="stack">
         <div class="panel stack">
@@ -327,7 +447,7 @@ INDEX_HTML = r"""<!doctype html>
       <table class="table">
         <thead>
           <tr>
-            <th>Dong</th><th>Gu</th><th>YoY angular</th><th>Gu rank</th><th>Unsold mean</th><th>Artifact</th>
+            <th>Dong</th><th>Gu</th><th>Metric value</th><th>Gu rank (legacy)</th><th>Unsold mean</th><th>Artifact</th>
           </tr>
         </thead>
         <tbody id="rowTable"></tbody>
@@ -337,11 +457,42 @@ INDEX_HTML = r"""<!doctype html>
 </div>
 
 <script>
-let payload, rows, summary;
-let state = { year: 2024, gu: "all", metric: "physical_yoy_angular", selected: null };
+let payload, rows, summary, polygons;
+let state = {
+  year: 2024,
+  gu: "all",
+  metric: "physical_yoy_angular",
+  policy: "metric_year_fe",
+  selected: null,
+};
 
 const fmt = (v, d=3) => (v === null || v === undefined || Number.isNaN(v)) ? "—" : Number(v).toFixed(d);
 const clean = v => (v === null || v === undefined || Number.isNaN(v)) ? null : Number(v);
+
+const POLICY_BODIES = {
+  raw: "Raw values are the unadjusted physical-change metrics. They surface the 2021–2022 regional common-mode shift; use only as a comparison reference.",
+  tokyo_taipei_offset: "Tokyo+Taipei anchor-residualized values subtract the cumulative anchor drift from each Seoul embedding before computing the metric. This is methodologically valid for axis-projection metrics but does NOT neutralize YoY angular distance (angular distance is not translation-invariant). Do not consume for alarm or EWS purposes.",
+  metric_year_fe: "Metric-year-FE values show deviation from the pilot cross-dong median for the same year-pair. They remove common year-pair level shifts but may also remove real Seoul-wide shocks.",
+};
+
+function metricIsPolicyAware(metric) {
+  const opt = [...metricSelect.options].find(o => o.value === metric);
+  return opt ? opt.dataset.policyAware === "true" : false;
+}
+
+function metricCol() {
+  return metricIsPolicyAware(state.metric)
+    ? `${state.metric}_${state.policy}`
+    : state.metric;
+}
+
+function metricLabel() {
+  const opt = metricSelect.options[metricSelect.selectedIndex];
+  const base = opt ? opt.text : state.metric;
+  return metricIsPolicyAware(state.metric)
+    ? `${base} · policy=${state.policy}`
+    : base;
+}
 
 function colorScale(v, min, max, artifact) {
   if (artifact) return "#b4463a";
@@ -363,7 +514,17 @@ function initControls() {
   yearSelect.innerHTML = ys.map(y => `<option value="${y}">${y}</option>`).join("");
   yearSelect.value = String(state.year);
   yearSelect.onchange = () => { state.year = Number(yearSelect.value); render(); };
-  metricSelect.onchange = () => { state.metric = metricSelect.value; render(); };
+  metricSelect.onchange = () => {
+    state.metric = metricSelect.value;
+    policySelect.disabled = !metricIsPolicyAware(state.metric);
+    render();
+  };
+  policySelect.onchange = () => { state.policy = policySelect.value; render(); };
+  if (summary.default_policy) {
+    state.policy = summary.default_policy;
+    policySelect.value = summary.default_policy;
+  }
+  policySelect.disabled = !metricIsPolicyAware(state.metric);
   document.querySelectorAll("[data-gu]").forEach(btn => {
     btn.onclick = () => {
       state.gu = btn.dataset.gu;
@@ -386,14 +547,53 @@ function renderStatus() {
   statusBadges.innerHTML = badges.map(([name, status, cls]) =>
     `<span class="badge ${cls}">${name}: ${status || "—"}</span>`).join("");
   contractPath.textContent = summary.contract_path;
+  manifestPath.textContent = summary.manifest_path
+    ? `Manifest: ${summary.manifest_path} (${summary.polygon_count} polygons)`
+    : "Manifest: not loaded (falling back to centroids)";
+}
+
+function renderNotices() {
+  const showArtifact = state.year === 2022 && metricIsPolicyAware(state.metric);
+  artifactNotice.style.display = showArtifact ? "" : "none";
+  const aware = metricIsPolicyAware(state.metric);
+  policyNotice.style.display = aware ? "" : "none";
+  if (aware) {
+    const scope = summary.metric_year_fe_scope || "pilot_cross_dong";
+    const title = state.policy === "metric_year_fe"
+      ? `Active policy: metric_year_fe (${scope})`
+      : `Active policy: ${state.policy}`;
+    policyNoticeTitle.textContent = title;
+    policyNoticeBody.textContent = POLICY_BODIES[state.policy] || "";
+  }
 }
 
 function renderKpis(current) {
-  const vals = current.map(r => clean(r[state.metric])).filter(v => v !== null).sort((a,b)=>a-b);
+  const col = metricCol();
+  const vals = current.map(r => clean(r[col])).filter(v => v !== null).sort((a,b)=>a-b);
   const med = vals.length ? vals[Math.floor(vals.length/2)] : null;
   kpiRows.textContent = current.length;
   kpiMedian.textContent = fmt(med);
   kpiArtifact.textContent = current.filter(r => r.physical_2022_artifact_flag).length;
+}
+
+function ringsToPath(rings, scaleX, scaleY) {
+  return rings.map(ring => {
+    if (!ring.length) return "";
+    let path = `M${scaleX(ring[0][0]).toFixed(2)},${scaleY(ring[0][1]).toFixed(2)}`;
+    for (let i = 1; i < ring.length; i++) {
+      path += `L${scaleX(ring[i][0]).toFixed(2)},${scaleY(ring[i][1]).toFixed(2)}`;
+    }
+    return path + "Z";
+  }).join(" ");
+}
+
+function visiblePolygons() {
+  const inView = new Set(rowsForYear().map(r => r.emd_cd));
+  const out = {};
+  for (const [emd, rings] of Object.entries(polygons || {})) {
+    if (inView.has(emd)) out[emd] = rings;
+  }
+  return out;
 }
 
 function renderMap(current) {
@@ -401,41 +601,101 @@ function renderMap(current) {
   svg.innerHTML = "";
   const w = svg.clientWidth || 700, h = svg.clientHeight || 500, pad = 34;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const lons = current.map(r => r.centroid_lon), lats = current.map(r => r.centroid_lat);
-  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const vals = current.map(r => clean(r[state.metric])).filter(v => v !== null);
-  const min = vals.length ? Math.min(...vals) : 0, max = vals.length ? Math.max(...vals) : 1;
+
+  const visible = visiblePolygons();
+  const havePolys = Object.keys(visible).length > 0;
+
+  // bbox: prefer polygon vertices when available, otherwise centroids
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  if (havePolys) {
+    for (const rings of Object.values(visible)) {
+      for (const ring of rings) {
+        for (const [lon, lat] of ring) {
+          if (lon < minLon) minLon = lon;
+          if (lon > maxLon) maxLon = lon;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        }
+      }
+    }
+  } else {
+    for (const r of current) {
+      if (r.centroid_lon < minLon) minLon = r.centroid_lon;
+      if (r.centroid_lon > maxLon) maxLon = r.centroid_lon;
+      if (r.centroid_lat < minLat) minLat = r.centroid_lat;
+      if (r.centroid_lat > maxLat) maxLat = r.centroid_lat;
+    }
+  }
+
+  const col = metricCol();
+  const vals = current.map(r => clean(r[col])).filter(v => v !== null);
+  const minV = vals.length ? Math.min(...vals) : 0;
+  const maxV = vals.length ? Math.max(...vals) : 1;
+  legendMin.textContent = fmt(minV);
+  legendMax.textContent = fmt(maxV);
+
   const scaleX = lon => pad + ((lon - minLon) / (maxLon - minLon || 1)) * (w - pad*2);
   const scaleY = lat => h - pad - ((lat - minLat) / (maxLat - minLat || 1)) * (h - pad*2);
 
   const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  bg.setAttribute("x", 0); bg.setAttribute("y", 0); bg.setAttribute("width", w); bg.setAttribute("height", h);
-  bg.setAttribute("fill", "#fdfefe"); svg.appendChild(bg);
+  bg.setAttribute("x", 0); bg.setAttribute("y", 0);
+  bg.setAttribute("width", w); bg.setAttribute("height", h);
+  bg.setAttribute("fill", "#fdfefe");
+  svg.appendChild(bg);
 
-  current.forEach(r => {
-    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    c.setAttribute("cx", scaleX(r.centroid_lon));
-    c.setAttribute("cy", scaleY(r.centroid_lat));
-    c.setAttribute("r", r.physical_2022_artifact_flag ? 8 : 7);
-    c.setAttribute("fill", colorScale(clean(r[state.metric]), min, max, r.physical_2022_artifact_flag));
-    c.setAttribute("class", `dot ${state.selected === r.emd_cd ? "selected" : ""}`);
-    c.onclick = () => { state.selected = r.emd_cd; render(); };
-    c.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "title")).textContent =
-      `${r.dong_name_kr} ${fmt(r[state.metric])}`;
-    svg.appendChild(c);
-  });
-  mapCaption.textContent = `${state.year} · ${metricSelect.options[metricSelect.selectedIndex].text}`;
+  const rowByEmd = new Map(current.map(r => [r.emd_cd, r]));
+
+  if (havePolys) {
+    for (const [emd, rings] of Object.entries(visible)) {
+      const r = rowByEmd.get(emd);
+      const v = r ? clean(r[col]) : null;
+      const artifact = r ? !!r.physical_2022_artifact_flag : false;
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", ringsToPath(rings, scaleX, scaleY));
+      p.setAttribute("fill", colorScale(v, minV, maxV, artifact));
+      p.setAttribute("fill-rule", "evenodd");
+      p.setAttribute("class", `poly ${state.selected === emd ? "selected" : ""} ${artifact ? "artifact" : ""}`);
+      p.onclick = () => { state.selected = emd; render(); };
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = r ? `${r.dong_name_kr} ${fmt(r[col])}${artifact ? "  (2022 artifact)" : ""}`
+                            : emd;
+      p.appendChild(title);
+      svg.appendChild(p);
+    }
+  } else {
+    // Centroid fallback
+    for (const r of current) {
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", scaleX(r.centroid_lon));
+      c.setAttribute("cy", scaleY(r.centroid_lat));
+      c.setAttribute("r", r.physical_2022_artifact_flag ? 8 : 7);
+      c.setAttribute("fill", colorScale(clean(r[col]), minV, maxV, r.physical_2022_artifact_flag));
+      c.setAttribute("class", `poly ${state.selected === r.emd_cd ? "selected" : ""}`);
+      c.onclick = () => { state.selected = r.emd_cd; render(); };
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = `${r.dong_name_kr} ${fmt(r[col])}`;
+      c.appendChild(title);
+      svg.appendChild(c);
+    }
+  }
+
+  mapCaption.textContent = `${state.year} · ${metricLabel()}`;
 }
 
 function renderBars(current) {
-  const sortable = current.filter(r => clean(r[state.metric]) !== null)
-    .sort((a,b) => clean(b[state.metric]) - clean(a[state.metric])).slice(0, 8);
-  const max = sortable.length ? Math.max(...sortable.map(r => clean(r[state.metric]))) : 1;
+  const col = metricCol();
+  const sortable = current.filter(r => clean(r[col]) !== null)
+    .sort((a,b) => clean(b[col]) - clean(a[col])).slice(0, 8);
+  const max = sortable.length ? Math.max(...sortable.map(r => clean(r[col]))) : 1;
+  const min = sortable.length ? Math.min(...sortable.map(r => clean(r[col]))) : 0;
+  // For centred (FE) metrics, values can be negative; map absolute distance from 0.
+  const span = Math.max(Math.abs(min), Math.abs(max), 1e-6);
   barList.innerHTML = sortable.map(r => {
-    const pct = Math.max(4, (clean(r[state.metric]) / (max || 1)) * 100);
+    const v = clean(r[col]);
+    const pct = Math.max(4, (Math.abs(v) / span) * 100);
+    const sign = v < 0 ? "−" : "";
     return `<div class="bar-row" role="button" onclick="state.selected='${r.emd_cd}';render();">
-      <span>${r.dong_name_kr}</span><span class="bar-track"><span class="bar" style="width:${pct}%"></span></span><strong>${fmt(r[state.metric])}</strong>
+      <span>${r.dong_name_kr}</span><span class="bar-track"><span class="bar" style="width:${pct}%"></span></span><strong>${sign}${fmt(Math.abs(v))}</strong>
     </div>`;
   }).join("");
 }
@@ -448,23 +708,40 @@ function renderLine() {
   svg.innerHTML = "";
   const w = svg.clientWidth || 360, h = 270, pad = 34;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const vals = series.map(r => clean(r.physical_yoy_angular));
+  const col = metricCol();
+  const vals = series.map(r => clean(r[col]));
   const valid = vals.filter(v => v !== null);
+  if (!valid.length) return;
+  const min = Math.min(...valid, 0);
   const max = Math.max(...valid, .001);
   const x = i => pad + (i / (series.length - 1 || 1)) * (w - pad*2);
-  const y = v => h - pad - ((v || 0) / max) * (h - pad*2);
-  const path = series.map((r,i) => `${i === 0 ? "M" : "L"}${x(i)},${y(clean(r.physical_yoy_angular))}`).join(" ");
+  const y = v => h - pad - ((v - min) / (max - min || 1)) * (h - pad*2);
+  // Zero line for centred metrics
+  if (min < 0 && max > 0) {
+    const z = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    z.setAttribute("x1", pad); z.setAttribute("x2", w - pad);
+    z.setAttribute("y1", y(0)); z.setAttribute("y2", y(0));
+    z.setAttribute("stroke", "#cdd6d6"); z.setAttribute("stroke-dasharray", "2,3");
+    svg.appendChild(z);
+  }
+  const points = series.filter(r => clean(r[col]) !== null);
+  const path = points.map((r,i) => `${i === 0 ? "M" : "L"}${x(series.indexOf(r))},${y(clean(r[col]))}`).join(" ");
   const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  p.setAttribute("d", path); p.setAttribute("fill","none"); p.setAttribute("stroke","#1d6f86"); p.setAttribute("stroke-width","3");
+  p.setAttribute("d", path); p.setAttribute("fill","none");
+  p.setAttribute("stroke","#1d6f86"); p.setAttribute("stroke-width","3");
   svg.appendChild(p);
   series.forEach((r,i) => {
+    const v = clean(r[col]);
+    if (v === null) return;
     const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(clean(r.physical_yoy_angular)));
+    dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(v));
     dot.setAttribute("r", r.physical_2022_artifact_flag ? 6 : 4);
     dot.setAttribute("fill", r.physical_2022_artifact_flag ? "#b4463a" : "#1d6f86");
     svg.appendChild(dot);
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    t.setAttribute("x", x(i)); t.setAttribute("y", h - 9); t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "10"); t.setAttribute("fill", "#66767c");
+    t.setAttribute("x", x(i)); t.setAttribute("y", h - 9);
+    t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "10");
+    t.setAttribute("fill", "#66767c");
     t.textContent = r.year; svg.appendChild(t);
   });
 }
@@ -474,12 +751,13 @@ function renderDetail() {
   if (!r) return;
   state.selected = r.emd_cd;
   selectedTitle.textContent = `${r.dong_name_kr} · ${r.gu_name}`;
+  const col = metricCol();
   const items = [
     ["EMD", r.emd_cd],
     ["Year", r.year],
     ["YoY pair", r.physical_yoy_year_pair || "—"],
-    ["YoY angular", fmt(r.physical_yoy_angular)],
-    ["Gu rank", fmt(r.physical_yoy_angular_gu_rank_desc, 0)],
+    ["Active metric", fmt(r[col])],
+    ["Policy", metricIsPolicyAware(state.metric) ? state.policy : "n/a"],
     ["Unsold mean", fmt(r.statnuri_unsold_mean_units, 0)],
     ["Redev zones", fmt(r.national_redevelopment_intensity_zone_count, 0)],
     ["Artifact", r.physical_2022_artifact_flag ? "2021→2022 flag" : "no"],
@@ -488,17 +766,19 @@ function renderDetail() {
 }
 
 function renderTable(current) {
-  const sorted = [...current].sort((a,b) => (clean(b.physical_yoy_angular)||-1) - (clean(a.physical_yoy_angular)||-1));
+  const col = metricCol();
+  const sorted = [...current].sort((a,b) => (clean(b[col])||-1) - (clean(a[col])||-1));
   rowTable.innerHTML = sorted.map(r => `<tr>
-    <td>${r.dong_name_kr}</td><td>${r.gu_name}</td><td>${fmt(r.physical_yoy_angular)}</td>
+    <td>${r.dong_name_kr}</td><td>${r.gu_name}</td><td>${fmt(r[col])}</td>
     <td>${fmt(r.physical_yoy_angular_gu_rank_desc, 0)}</td><td>${fmt(r.statnuri_unsold_mean_units, 0)}</td>
-    <td>${r.physical_2022_artifact_flag ? '<span class="badge artifact">flag</span>' : ''}</td>
+    <td>${r.physical_2022_artifact_flag ? '<span class="badge artifact">2022 flag</span>' : ''}</td>
   </tr>`).join("");
 }
 
 function render() {
   const current = rowsForYear();
   renderStatus();
+  renderNotices();
   renderKpis(current);
   renderMap(current);
   renderBars(current);
@@ -510,7 +790,7 @@ function render() {
 fetch("/api/contract")
   .then(r => r.json())
   .then(data => {
-    payload = data; rows = data.rows; summary = data.summary;
+    payload = data; rows = data.rows; summary = data.summary; polygons = data.polygons || {};
     state.year = Math.max(...summary.years);
     initControls();
     render();
