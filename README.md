@@ -49,14 +49,65 @@ python prototype.py --mode ee --gcp-project YOURS --wolse-source molit   # both 
 
 Perfect leave-one-out on mock data is *expected* (the synthetic generator plants a shared drift direction). It is not validation.
 
-Local dashboard:
+For the pilot dashboard MVP — runnable surface, controls, non-claims, and unblock paths — see the five sections below.
+
+## Run the dashboard
+
+The dashboard is a localhost HTTP server with no external dependencies beyond the project's Python environment. It reads two artifacts under `data/`:
+
+1. `data/pilot_legal_dong_manifest.parquet` — 40 legal-dong polygons (produced by `legal_dong_polygons.py`).
+2. `data/seoul_pilot_alphaearth.parquet` — 40 dongs × 8 years embedding panel (produced by `seoul_pilot_extract.py`).
+3. (Optional) `data/seoul_pilot_physical_residualized.parquet` — three-policy feature layer (produced by `seoul_physical_residualized.py`).
+4. (Optional) `data/statnuri_unsold_panel.parquet`, `data/national_redevelopment_intensity.parquet` — Block 4 controls.
+
+Build the dashboard contract from whichever of those are present, then serve:
 
 ```bash
 python dashboard_pilot_contract.py
 python dashboard_app.py --host 127.0.0.1 --port 8765
 ```
 
-Then open `http://127.0.0.1:8765`. The dashboard reads `data/dashboard_pilot_contract.parquet`, renders the 마포구+강남구 pilot, and keeps live/parked/not-scoped block statuses visible. It does not compute or display a forecast, probability, or composite score.
+Open `http://127.0.0.1:8765`. The contract builder fails closed if the AlphaEarth pilot panel is missing; Block 4 controls and the residualized layer are merged opportunistically when present and status-marked as `missing_local_artifact` otherwise.
+
+## What the pilot map shows
+
+A descriptive choropleth over the 40-dong **마포구 + 강남구** pilot. Each polygon is the official D001 법정동 boundary, EPSG:4326. Polygon fill encodes the selected metric under the selected artifact policy. The dashboard is **descriptive only** — there is no forecast, no probability, no composite score.
+
+- **Metric selector** lists policy-aware Block 2 metrics (`physical_yoy_angular`, `physical_yoy_cosine_dist`, `physical_yoy_euclid`, `physical_embedding_norm`) and policy-neutral Block 4 metrics (`statnuri_unsold_mean_units`, `national_redevelopment_intensity_zone_count`).
+- **Year selector** picks the year. For YoY metrics, year *N* renders the *N−1 → N* transition.
+- **Gu segmented control** filters between 마포구, 강남구, or both.
+- **Top dongs / Selected timeline / Current-year table** panels reflect the same metric + policy selection as the map.
+- **Sidebar block-status badges** show live / parked / not-scoped per evidence block.
+
+## Artifact-policy controls
+
+Per `docs/dashboard_mvp_spec.md` §7, the dashboard exposes three analytical policies for the AlphaEarth physical-change layer side-by-side. The selector is the third toolbar control on the map page:
+
+- **`raw`** — no adjustment. Surfaces the 2021–2022 regional common-mode shift unmodified. Comparison reference only.
+- **`tokyo_taipei_offset`** — subtracts cumulative Tokyo + Taipei anchor drift from each Seoul embedding before computing the metric. Valid for axis-projection metrics but **does not** neutralize YoY angular distance (recorded negative result in `c22390c`). Do not consume for alarm / EWS purposes.
+- **`metric_year_fe`** *(default)* — subtracts the cross-dong median of each metric within the same year-pair, at `pilot_cross_dong` scope. Interpretation: "deviation from the pilot cross-dong median for the same year-pair." It removes common year-pair level shifts but **may also remove real Seoul-wide shocks** — it is a relative anomaly, not artifact-free truth.
+
+When the active metric is policy-aware AND the selected year is **2022** (the 2021–2022 transition), a red notice appears in the dashboard repeating the strict rule: **2021–2022 is artifact-sensitive; values are displayed for transparency but must not be used for alarm / EWS / forecast-like interpretation.**
+
+## What this MVP does not claim
+
+The dashboard and the underlying contract deliberately do **not** ship any of the following. Each is forbidden until the named input changes; see `docs/mvp_state_2026.md` for the full inventory.
+
+- **No EWS / alarm / forecast** in any UI element, column name, or exported value. AlphaEarth gives only 8 annual observations per dong; any forecast scalar built on this is dressed-up noise.
+- **No supervised ML on the 96-row labeled panel.** 12 dongs × 8 years is structurally insufficient for boosted trees / random forests / gu fixed effects / calibration; see `project-dashboard-framing-small-n-constraints-2026-05-25`.
+- **No composite gentrification / displacement / risk score** as a single number. Four-block typology framing only.
+- **No resurrection of the AlphaEarth 1-D gentrification axis** as a primary signal — empirically rejected by the residualized-axis audit (`project-residualized-axis-audit-2026-05-25`).
+- **No ingestion of the KOGL-4 정비구역 polygon source** (`data.go.kr 15082965` / Seoul `OA-20957`) into derived dashboard features. The governing license forbids derivative use. See `docs/development_spatial_companion_status.md`.
+
+## Parked blocks and unblock paths
+
+Three evidence blocks are explicitly **parked** in the MVP and the dashboard renders them as `parked` / `missing_local_artifact` / `not_scoped` status badges accordingly:
+
+- **Block 1 — Tenure pressure.** No StatNuri tenure-split candidate validated; data.go.kr `RTMSDataSvcAptRent` is code-ready but credential-blocked. Unblocks on: a portal-authenticated StatNuri catalog browse identifying a tenure-split form_id, **or** a decoded `RTMSDataSvcAptRent` key set as `MOLIT_SERVICE_KEY` in a fresh shell. See `docs/tenure_source_status.md`.
+- **Block 3 — Vulnerability.** No source identified (KOSIS demographics / household income / age structure all out of scope). Unblocks on: source identification followed by a status doc analogous to `docs/tenure_source_status.md`.
+- **Block 4c — Spatial development companion.** Track 1 (의제처리구역 SHP) governed by KOGL-4 at the file source — derivative use forbidden. Track 2 (Seoul aggregate tables 235 / 10804 / 145) clean KOGL-1 but file slots empty. 건축HUB OpenAPI parked as post-MVP. Unblocks on: KOGL-1 license clarification for the designation overlay, **or** a non-file access path (CSV / API / stat-table) for the Seoul aggregate tables. See `docs/development_spatial_companion_status.md`.
+
+The dashboard's `development_pressure_spatial_variation` stays `none` until Block 4c lands. Live block-4 signals (`statnuri_unsold_*` at gu × year, `national_redevelopment_intensity_*` at national × year) are unaffected.
 
 ## Data sources
 
