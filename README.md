@@ -6,6 +6,8 @@ Seoul gentrification research prototype. Pairs Google AlphaEarth satellite embed
 
 **Research-design repair phase — not a validated model.** A within-panel audit found that the learned embedding axis is not gentrification-specific: Mullae (an active_panel case) is the strongest outlier rather than the labeled control Hwagok, and all dongs share a suspicious 2022 year-over-year peak that points to an AlphaEarth pipeline artifact rather than to urban change. Until that is resolved, mock and live runs are scaffold checks, not empirical evidence.
 
+Current MVP ceiling, live/parked/forbidden inventory, and unblock paths are recorded in [`docs/mvp_state_2026.md`](docs/mvp_state_2026.md).
+
 ## What this is — and isn't
 
 - **Is:** a screening layer for *physical* neighborhood change (AlphaEarth) paired with a *tenure-pressure* layer (wolse ratio from MOLIT). Output is a per-(dong, year) projection slope on a learned drift axis plus a wolse slope — reported separately, not as a single score.
