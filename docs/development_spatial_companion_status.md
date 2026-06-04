@@ -87,44 +87,94 @@ higher-resolution upgrade if Seoul aggregates prove insufficient.
 - **재재맵 / private viewers** — third-party, no usable license.
 - **NSDI 4077 OpenAPI list** (`nsdi.go.kr/lxportal/?menuno=4077`) — meta-index of national spatial OpenAPIs; surfaced multiple times but no single canonical candidate emerged that wasn't already covered by the entries above.
 
-## 6. Verdict
+## 6. Empirical access checks (2026-06-04)
 
-Block 4c can be unparked with two-track integration:
+The check pass downgrades both proposed tracks. Recorded so the audit
+trail captures the negative result rather than letting downstream work
+assume Block 4c is unblocked.
 
-- **Track 1 — designation overlay**: download
-  `data.go.kr/15082965` (서울 의제처리구역 SHP) once, reproject to
-  EPSG:4326, store as a versioned snapshot under `data/raw/` (gitignored).
-  A small loader produces per-dong boolean / zone-type-string columns
-  that the dashboard contract can carry as the `development_pressure_spatial_variation` upgrade from `none` to `dong`.
-- **Track 2 — gu × year time series**: pull the three Seoul aggregate
-  tables (`235`, `10804`, `145`) for permit volume, building stock, and
-  GFA per gu × year. Aggregate-level, no OpenAPI approval, joinable on
-  the existing `lawd_cd × year` Block 4 key.
+### Track 1 — 의제처리구역 SHP
 
-These are complementary: Track 1 gives a spatial cross-section (where
-zones are designated *now*); Track 2 gives a temporal signal (how much
-permit / completion activity each gu has *over time*). Together they
-fill the `development_pressure_status: missing_local_artifact` field
-into something the dashboard map can render as a meaningful Block 4
-choropleth.
+`data.go.kr 15082965` and its Seoul Open Data mirror
+(`OA-20957`) are downloadable. **License metadata conflicts**:
+the `data.go.kr` wrapper lists **KOGL-1** (출처표시 only — commercial
+use and modification permitted) while the actual Seoul file page that
+serves the ZIPs lists **KOGL-4** (출처표시 + 상업적 이용금지 +
+변경금지 — attribution + non-commercial + no derivatives).
+
+Because the working file is served from the Seoul Open Data page,
+**treat KOGL-4 as governing until proven otherwise**. Polygon
+intersection with the pilot 법정동 polygons and the publication of
+derived `agenda_zone_*` columns into a dashboard panel would
+constitute a transformation / derivative use, which is exactly what
+KOGL-4 forbids.
+
+**Verdict: Track 1 parked pending license clarification.** Either (a)
+confirm whether the canonical license is KOGL-1 or KOGL-4 via a
+direct enquiry / provider check, or (b) find a no-derivative-safe
+substitute.
+
+### Track 2 — Seoul aggregate tables (235 / 10804 / 145)
+
+All three Seoul aggregate datasets show **`파일이 없습니다` (no files
+available)** in public inspection of their view pages, despite
+KOGL-1 (출처표시) license metadata and recent metadata-refresh
+timestamps. Cross-checked against the AI fetcher and the user's
+browser check — both saw the empty file slots.
+
+**Verdict: Track 2 parked pending alternate access path.** The
+datasets exist as metadata records but do not currently expose files
+through the standard download flow. A non-file access path
+(stat-table query, CSV endpoint, or OpenAPI variant of the same data)
+must be identified before integration.
+
+## 7. Verdict
+
+Block 4c remains **scouted but not unparked**. Neither Track 1
+(designation overlay) nor Track 2 (gu × year aggregates) cleared the
+no-approval, repo/dashboard-safe ingestion bar:
+
+- Track 1: downloadable but governing license is KOGL-4 (no
+  derivatives) at the file-source page.
+- Track 2: licensed clean (KOGL-1) but file slots empty.
+
+The dashboard's `development_pressure_spatial_variation` stays
+`none`, and `development_pressure_status` stays
+`missing_local_artifact` for the supply-side spatial signal until a
+qualifying source lands.
+
+## 8. Next scout direction
+
+Priority order for the next pass:
+
+1. **Confirm whether the three Seoul aggregate tables (235 / 10804 /
+   145) have a stable non-file access path** — CSV endpoint, OpenAPI
+   companion, or stat-table query — despite empty file slots on the
+   view page. If yes, Track 2 is restored at KOGL-1 and lands first.
+2. **Check `data.go.kr 15046333`** (`서울특별시_건축물 현황 통계
+   _20191231`) only as a single-snapshot fallback for 10804.
+   Snapshot-only, not annual panel; usable as a one-year sanity layer
+   only.
+3. **Re-scout KOGL-1 (or KOGL-2) Seoul urban-planning / construction
+   datasets** — `data.seoul.go.kr` and `data.go.kr` searches with the
+   `KOGL-1` filter, looking for permit / completion / 정비사업
+   spatial alternatives that aren't covered by the rejected
+   candidates above.
+4. **Only then pivot to 세움터 bulk downloads** — it remains a viable
+   no-approval path but is the highest-friction option, so it stays
+   parked behind the Seoul-side checks.
+
+The 건축HUB OpenAPI path (`15136267`, `15134735`) remains parked as
+the post-MVP high-resolution upgrade and does not re-enter scope until
+the no-approval pass exhausts.
 
 **Open user-side actions before any code:**
 
-1. Confirm the **`data.go.kr 15082965` SHP downloads without login or
-   approval** and that the KOGL-style license permits repo/dashboard
-   use with attribution (the same check pattern as the polygon-source
-   decision in `docs/full_seoul_expansion_scope.md` §4).
-2. Confirm the three Seoul aggregate tables (`data.seoul.go.kr` IDs
-   `235`, `10804`, `145`) are file-downloadable without login and
-   under a usable license.
-3. Decide whether to also pursue the **건축HUB OpenAPI** (`15136267`,
-   `15134735`) on the data.go.kr approval path, or whether the
-   designation overlay + Seoul aggregate tables are sufficient for
-   the MVP Block 4c claim.
-
-Until items (1) and (2) are confirmed, no client code is written.
-Until item (3) is decided, the choice between aggregate-only and
-per-building-resolution remains open.
+1. ✗ `data.go.kr 15082965` — downloadable but KOGL-4 governs at the
+   file-source page; **parked**.
+2. ✗ `data.seoul.go.kr 235 / 10804 / 145` — KOGL-1 license, empty file
+   slots; **parked pending alternate access path**.
+3. Pursue (1)–(2) in §8 before any code commit.
 
 ## Sources
 
