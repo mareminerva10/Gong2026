@@ -2,7 +2,9 @@
 
 This is the freeze note for the current MVP ceiling under the no-approval public-data state. It states exactly what is currently live, what is parked and why, and what is forbidden until inputs change. The intent is to protect the project from scope creep and to give a clean handoff point.
 
-Anchor commit: `origin/master = 59be4d9` on `master`. If anything below claims "live" but the corresponding artifact is missing on a fresh clone, the source-of-truth docs cited per bullet are authoritative.
+**Product name:** Seoul built-environment change tracker with housing-supply pressure controls (40-dong pilot at present). Gentrification is an interpretation layer over these signals, not a model output. *Forecast*, *risk*, *probability*, *prediction*, *alarm*, and *score* are prohibited in titles, UI copy, and exported columns; see §Forbidden until inputs change.
+
+Freeze baseline: `origin/master = 59be4d9` on `master`. The product-claim reframe lands in a subsequent T4 commit. If anything below claims "live" but the corresponding artifact is missing on a fresh clone, the source-of-truth docs cited per bullet are authoritative.
 
 ## Live
 

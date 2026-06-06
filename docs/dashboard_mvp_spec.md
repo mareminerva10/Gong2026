@@ -6,6 +6,8 @@ All design decisions below are grounded in the project memory tracked under `~/.
 
 ## 1. Product claim
 
+**Product name:** Seoul built-environment change tracker with housing-supply pressure controls.
+
 > **A descriptive Seoul neighborhood dashboard for observed housing-pressure and development-pressure evidence, organized into four blocks with explicit per-block data-status badges. Gentrification is an interpretation layer, not a model output.**
 
 Concretely, the MVP:

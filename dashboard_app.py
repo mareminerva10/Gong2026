@@ -169,7 +169,7 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gong2026 Pilot Dashboard</title>
+  <title>Gong2026 — Seoul built-environment change tracker (pilot)</title>
   <style>
     :root {
       --ink: #172126;
@@ -350,8 +350,8 @@ INDEX_HTML = r"""<!doctype html>
 <div class="app">
   <aside class="stack">
     <div class="stack">
-      <h1>Gong2026 Pilot</h1>
-      <p class="subtle">마포구 + 강남구 legal-dong panel, 2017–2024</p>
+      <h1>Seoul built-environment change tracker</h1>
+      <p class="subtle">Gong2026 pilot · 마포구 + 강남구 legal-dong panel, 2017–2024</p>
     </div>
     <section class="panel stack">
       <h2>Evidence Blocks</h2>

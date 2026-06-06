@@ -1,6 +1,6 @@
 # Gong2026
 
-Seoul gentrification research prototype. Pairs Google AlphaEarth satellite embeddings with MOLIT (data.go.kr) rent-transaction records to test whether physical neighborhood change and tenure-pressure can be separately identified at the dong (administrative neighborhood) level, 2017–2024.
+Seoul built-environment change tracker with housing-supply pressure controls. Pairs Google AlphaEarth satellite embeddings with MOLIT (data.go.kr) StatNuri housing-supply and redevelopment-intensity records to surface descriptive physical neighborhood change and gu-level housing-supply pressure at the dong (administrative neighborhood) level, 2017–2024. Gentrification is an interpretation layer over these signals, not a model output.
 
 ## Status
 
@@ -10,11 +10,15 @@ Current MVP ceiling, live/parked/forbidden inventory, and unblock paths are reco
 
 ## What this is — and isn't
 
-- **Is:** a screening layer for *physical* neighborhood change (AlphaEarth) paired with a *tenure-pressure* layer (wolse ratio from MOLIT). Output is a per-(dong, year) projection slope on a learned drift axis plus a wolse slope — reported separately, not as a single score.
+- **Is:** a descriptive screening layer for *physical* neighborhood change (AlphaEarth) at dong-year grain, paired with live gu-year housing-supply stress (StatNuri 미분양) and national-year redevelopment intensity (StatNuri 재개발) as Block-4 context. Tenure pressure (Block 1) and vulnerability (Block 3) remain parked; see [`docs/mvp_state_2026.md`](docs/mvp_state_2026.md).
 - **Isn't:** a displacement predictor. AlphaEarth measures morphology, not who is displaced. The defensible framing is a four-block layered model — physical / tenure / vulnerability / development pressure — kept distinct so social and commercial risk don't get collapsed.
 - **Not a PF credit signal.** Real-estate project-finance underwriting requires variables this model does not carry (acquisition cost, debt structure, pre-sale rate, exit liquidity). The intended downstream use, if and when validated, is spatial due-diligence input, not credit scoring.
 
 ## Methodology
+
+### Live MVP pipeline (descriptive)
+
+The current MVP is a descriptive built-environment change tracker over a 40-dong 마포구+강남구 pilot. It does not forecast, does not output a composite score, and does not resurrect the rejected 1-D axis. The pipeline runs `seoul_pilot_extract.py` → `seoul_physical_residualized.py` → `dashboard_pilot_contract.py` → `dashboard_app.py`, with Block-4 controls (`statnuri_unsold_*`, `national_redevelopment_intensity_*`) joined in when their local artifacts are present. See [`docs/mvp_state_2026.md`](docs/mvp_state_2026.md) and [`docs/dashboard_mvp_spec.md`](docs/dashboard_mvp_spec.md).
 
 ### Current control status
 
@@ -24,6 +28,10 @@ Live, non-mocked controls currently included in the model panel:
 - `statnuri_unsold_mean_units`, `statnuri_unsold_max_units`, `statnuri_unsold_dec_units`: live StatNuri unsold-housing table `form_id=2082`, `style_num=128`, aggregated from monthly Seoul gu-level rows to annual gu-level housing-market stress controls.
 - `wolse_ratio`: still synthetic/mock-shaped. The live data.go.kr apartment rent transaction pull remains parked pending a valid decoded data.go.kr key for `RTMSDataSvcAptRent`.
 - Reconstruction controls remain parked: the granted StatNuri reconstruction table returns empty metric rows at `style_num=1`.
+
+### Historical research design — steps 1–6 rejected by 2026-05-25 residualization audit; steps 7–8 still live as controls
+
+The numbered steps below describe the original learned-axis approach. The 2026-05-25 audit (`project-residualized-axis-audit-2026-05-25`) rejected the 1-D drift axis as a gentrification signal, so steps 1–6 are kept here only to keep the audit trail legible — they are **not** the live pipeline. Steps 7–8 describe Block-4 controls that remain live and are summarized under §Current control status above.
 
 1. Pick labeled Seoul cases: 2 active_panel gentrifying dongs, 4 post_peak (cycle finished before 2017), 6 controls.
 2. For each (dong × year, 2017–2024), extract a 64-D AlphaEarth embedding mean over the dong polygon at 10 m scale.
@@ -141,7 +149,7 @@ outputs/                 generated plots (gitignored)
 
 | Component | State |
 |---|---|
-| AlphaEarth axis learning + LOO | implemented; **scientific validity under audit** (see Status above) |
+| AlphaEarth axis learning + LOO | **rejected** by 2026-05-25 residualization audit; archived, not in MVP pipeline |
 | MOLIT rent client | implemented with guardrails (pagination, retry, fail-loud, raw-chunk cache); awaiting first live pull |
 | National redev intensity control | implemented; 8 years (2017–2024) validated against live API; additive invariant on 건립가구 categories holds; joined into `data/dong_year_model_panel.parquet` |
 | Gu-level unsold-housing stress control | implemented; 96 monthly pulls (2017-01..2024-12) over Seoul's 25 gus; annual mean/max/Dec; joined into `data/dong_year_model_panel.parquet` by `lawd_cd × year` |
@@ -153,4 +161,4 @@ outputs/                 generated plots (gitignored)
 | Synthetic mock pipeline | works end-to-end; perfect LOO is by construction, not by evidence |
 | Hwagok / Mullae axis-specificity audit | open |
 | 2022 AlphaEarth artifact diagnosis | reproduced in 마포구+강남구 pilot: 95% of dongs have 2021→2022 as the max angular YoY jump; MVP policy remains `flag_2022` |
-| Composite four-block model | not yet implemented; deliberately deferred until axis is validated |
+| Four-block descriptive dashboard | implemented for 마포구+강남구 pilot; full-Seoul + Blocks 1/3/4c parked per `docs/mvp_state_2026.md` |
