@@ -55,7 +55,8 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 | 2 Physical change | `physical_embedding_norm`, `physical_yoy_angular`, `physical_yoy_cosine_dist`, `physical_yoy_euclid`, within-gu anomaly rank/z-score; **not** the rejected 1-D axis | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | legal-dong × year | **LIVE — completed 마포구+강남구 pilot cache and dashboard contract**; full-Seoul expansion requires explicit authorization |
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
-| 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |
+| 4b Unsold housing stress (pre-completion) | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024). Pre-completion / pre-sale unsold — 'inventory waiting to sell'. |
+| 4b Unsold housing stress (post-completion) | `statnuri_completed_unsold_{mean,max,dec}_units` | StatNuri 5328/1 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024). Post-completion unsold — 'inventory built but unsold' (canonical overhang indicator). Tracked under separate `completed_unsold_status` to avoid conflation. |
 | 4c Spatial development companion | `landuse_{built,vegetation,infrastructure,transport}_share` + raw 56-column audit retention | StatNuri 2300/2 | gu × year | **LIVE — gu-level broadcast / context** (not within-gu spatial variation; resolved 2026-06-08 via `molit_landuse_client.py`) |
 
 ## 5. Grain-mismatch and map-rendering rules

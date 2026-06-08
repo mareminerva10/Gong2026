@@ -33,6 +33,7 @@ DATA = HERE / "data"
 DEFAULT_ALPHAEARTH = DATA / "seoul_pilot_alphaearth.parquet"
 DEFAULT_QA = DATA / "seoul_pilot_alphaearth_qa.json"
 DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
+DEFAULT_COMPLETED_UNSOLD = DATA / "statnuri_completed_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
 DEFAULT_LANDUSE = DATA / "statnuri_landuse_panel.parquet"
 DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
@@ -164,6 +165,15 @@ def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["landuse_grain"] = "gu-year"
     out["landuse_status"] = "missing_local_artifact"
 
+    # Block 4b second sub-row: post-completion unsold (StatNuri 5328/1).
+    # Pre-completion unsold (2082/128) is captured under housing_stress_*;
+    # post-completion is structurally a different signal (canonical
+    # 'overhang' indicator) and tracked under its own status field. See
+    # docs/molit_probe_2026-06-07.md §7 Target A.
+    out["completed_unsold_source"] = "statnuri_5328_1"
+    out["completed_unsold_grain"] = "gu-year"
+    out["completed_unsold_status"] = "missing_local_artifact"
+
     out["dashboard_claim_scope"] = "descriptive_physical_change_only"
     out["composite_score_status"] = "not_computed"
     return out
@@ -213,6 +223,49 @@ def merge_optional_residualized(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     keep = ["emd_cd", "year", *policy_cols, "metric_year_fe_scope"]
     keep = [c for c in keep if c in res.columns]
     return df.merge(res[keep], on=["emd_cd", "year"], how="left")
+
+
+def merge_optional_completed_unsold(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Merge the StatNuri 5328/1 post-completion unsold panel (Block 4b
+    sub-row) if its parquet is present.
+
+    Joined by `lawd_cd × year`. The panel is at gu × year grain; on the
+    dong-year contract this is gu-level broadcast, like the pre-completion
+    unsold (`statnuri_unsold_*`) and the land-use shares. Pre-completion
+    unsold and post-completion unsold are intentionally kept under
+    separate status fields (`housing_stress_status` vs
+    `completed_unsold_status`) so a future consumer cannot conflate the
+    'inventory waiting to sell' and 'inventory built but unsold' signals,
+    which carry different downstream meaning.
+
+    Differs from form 2082/128 in zero handling: 5328/1 rows are present
+    with explicit `호=0`, so missing values after the merge are true
+    join-failure NAs, not legitimate zeros."""
+    if not path.exists():
+        return df
+    cu = pd.read_parquet(path).copy()
+    required = {"lawd_cd", "year"}
+    missing = required - set(cu.columns)
+    if missing:
+        raise ValueError(
+            "completed-unsold panel missing required columns: "
+            f"{sorted(missing)}")
+    cu["lawd_cd"] = cu["lawd_cd"].astype(str)
+    cu["year"] = cu["year"].astype(int)
+    value_cols = [c for c in cu.columns
+                  if c.startswith("statnuri_completed_unsold_")]
+    if not value_cols:
+        raise ValueError(
+            "completed-unsold panel has no statnuri_completed_unsold_* "
+            f"value columns. Available: {sorted(cu.columns)[:8]}")
+    out = df.merge(
+        cu[["lawd_cd", "year", *value_cols]],
+        on=["lawd_cd", "year"],
+        how="left",
+    )
+    out["completed_unsold_status"] = np.where(
+        out[value_cols].notna().any(axis=1), "live", "missing_join_row")
+    return out
 
 
 def merge_optional_landuse(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -340,6 +393,9 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
         "landuse_source",
         "landuse_grain",
         "landuse_status",
+        "completed_unsold_source",
+        "completed_unsold_grain",
+        "completed_unsold_status",
         "dashboard_claim_scope",
         "composite_score_status",
     ]
@@ -354,6 +410,7 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
     optional_cols = [
         c for c in df.columns
         if c.startswith("statnuri_unsold_")
+        or c.startswith("statnuri_completed_unsold_")
         or c.startswith("national_redevelopment_intensity_")
         or c in landuse_surface
     ]
@@ -419,6 +476,7 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
         "housing_stress_status": "missing_local_artifact",
         "development_pressure_status": "missing_local_artifact",
         "landuse_status": "missing_local_artifact",
+        "completed_unsold_status": "missing_local_artifact",
         "composite_score_status": "not_computed",
     }
     for col, expected in expected_status.items():
@@ -490,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--alphaearth", default=str(DEFAULT_ALPHAEARTH))
     ap.add_argument("--qa", default=str(DEFAULT_QA))
     ap.add_argument("--unsold", default=str(DEFAULT_UNSOLD))
+    ap.add_argument("--completed-unsold", default=str(DEFAULT_COMPLETED_UNSOLD))
     ap.add_argument("--redev", default=str(DEFAULT_REDEV))
     ap.add_argument("--landuse", default=str(DEFAULT_LANDUSE))
     ap.add_argument("--residualized", default=str(DEFAULT_RESIDUALIZED))
@@ -501,6 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     contract = add_status_columns(contract)
     contract = merge_optional_residualized(contract, Path(args.residualized))
     contract = merge_optional_unsold(contract, Path(args.unsold))
+    contract = merge_optional_completed_unsold(contract,
+                                               Path(args.completed_unsold))
     contract = merge_optional_redev(contract, Path(args.redev))
     contract = merge_optional_landuse(contract, Path(args.landuse))
     contract = select_columns(contract)

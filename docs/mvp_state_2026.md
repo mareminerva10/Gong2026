@@ -15,8 +15,9 @@ The product surface that is built, tested, and audit-trail-recorded:
 - **AlphaEarth physical-change layer** (40 dongs × 8 years = 320 rows), produced by `seoul_pilot_extract.py` and audited by `seoul_pilot_qa.py`. All §8 acceptance gates closed or recorded as deliberate spec-deviations. See `docs/full_seoul_expansion_scope.md` §8.
 - **Three-policy artifact-handling feature layer** (`raw`, `tokyo_taipei_offset`, `metric_year_fe`) from `seoul_physical_residualized.py`, merged into the contract. Default analytical policy: `metric_year_fe` at `pilot_cross_dong` scope. See `docs/dashboard_mvp_spec.md` §7.
 - **Artifact-aware policy selector + warning copy** in the dashboard. Strict consumption rule (no alarm / EWS / forecast on 2021–2022 transitions) is rendered as a red notice when a policy-aware metric is active in year=2022. See `docs/dashboard_mvp_spec.md` §7.
-- **Block 4 controls live** (three sub-rows):
-  - `statnuri_unsold_{mean,max,dec}_units` at gu × year grain via `molit_unsold_client.py` (Block 4b, housing-supply demand stress).
+- **Block 4 controls live** (four sub-rows):
+  - `statnuri_unsold_{mean,max,dec}_units` at gu × year grain via `molit_unsold_client.py` — Block 4b sub-row 1, **pre-completion / pre-sale unsold** ('inventory waiting to sell').
+  - `statnuri_completed_unsold_{mean,max,dec}_units` at gu × year grain via `molit_completed_unsold_client.py` — Block 4b sub-row 2, **post-completion unsold** ('inventory built but unsold' — the canonical 'overhang' indicator). Tracked under a separate `completed_unsold_status` to avoid conflation with sub-row 1.
   - `national_redevelopment_intensity_*` at national × year grain via `molit_redev_client.py` (Block 4a, redevelopment intensity).
   - `landuse_{built,vegetation,infrastructure,transport}_share` at gu × year grain via `molit_landuse_client.py` (Block 4c, **gu-level land-use context / broadcast** — not within-gu spatial variation; the dong-grain designation overlay remains parked under KOGL-4). With Block 4c present, `development_pressure_spatial_variation` flips from `none` to `gu`.
 - **Audit-trail caveats** for all §8 acceptance gates that were closed by deliberate change or partial coverage. See `docs/full_seoul_expansion_scope.md` §8 caveats.

@@ -68,6 +68,12 @@ DISPLAY_COLS = [
     "statnuri_unsold_mean_units",
     "statnuri_unsold_max_units",
     "statnuri_unsold_dec_units",
+    "statnuri_completed_unsold_mean_units",
+    "statnuri_completed_unsold_max_units",
+    "statnuri_completed_unsold_dec_units",
+    "completed_unsold_source",
+    "completed_unsold_grain",
+    "completed_unsold_status",
     "national_redevelopment_intensity_zone_count",
     "national_redevelopment_intensity_area_m2",
     "national_redevelopment_intensity_demolition_targets",
@@ -146,6 +152,7 @@ def load_payload(contract_path: Path,
                 "tenure_status",
                 "vulnerability_status",
                 "housing_stress_status",
+                "completed_unsold_status",
                 "development_pressure_status",
                 "landuse_status",
                 "composite_score_status",
@@ -388,7 +395,8 @@ INDEX_HTML = r"""<!doctype html>
           <option value="physical_yoy_cosine_dist" data-policy-aware="true">YoY cosine distance (Block 2)</option>
           <option value="physical_yoy_euclid" data-policy-aware="true">YoY Euclidean change (Block 2)</option>
           <option value="physical_embedding_norm" data-policy-aware="true">Embedding norm (Block 2)</option>
-          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Unsold mean units (Block 4b, gu-year broadcast)</option>
+          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Pre-completion unsold mean (Block 4b, gu-year broadcast)</option>
+          <option value="statnuri_completed_unsold_mean_units" data-policy-aware="false">Post-completion unsold mean (Block 4b, gu-year broadcast)</option>
           <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
           <option value="landuse_built_share" data-policy-aware="false">Land-use: built share (Block 4c, gu-year broadcast)</option>
           <option value="landuse_vegetation_share" data-policy-aware="false">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
@@ -550,7 +558,8 @@ function renderStatus() {
   const s = summary.statuses;
   const badges = [
     ["Physical", s.physical_status?.[0], "live"],
-    ["Housing stress", s.housing_stress_status?.[0], s.housing_stress_status?.[0] === "live" ? "live" : "warn"],
+    ["Pre-completion unsold", s.housing_stress_status?.[0], s.housing_stress_status?.[0] === "live" ? "live" : "warn"],
+    ["Post-completion unsold", s.completed_unsold_status?.[0], s.completed_unsold_status?.[0] === "live" ? "live" : "warn"],
     ["Development", s.development_pressure_status?.[0], s.development_pressure_status?.[0] === "live" ? "live" : "warn"],
     ["Land-use (gu broadcast)", s.landuse_status?.[0], s.landuse_status?.[0] === "live" ? "live" : "warn"],
     ["Tenure", s.tenure_status?.[0], "warn"],
