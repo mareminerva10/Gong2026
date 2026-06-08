@@ -471,6 +471,7 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
         errors.append(f"prohibited forecast/model columns present: {prohibited_cols}")
 
     expected_status = {
+        "physical_status": "live",
         "tenure_status": "parked",
         "vulnerability_status": "not_scoped",
         "housing_stress_status": "missing_local_artifact",
