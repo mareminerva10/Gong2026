@@ -91,12 +91,17 @@ def _check_cases_schema(cases: pd.DataFrame) -> None:
 
 
 def _parse_response(xml_text: str, lawd_cd: str, ymd: str) -> tuple[list[dict], int]:
-    """Return (items, totalCount). Raises if resultCode != '00'."""
+    """Return (items, totalCount). Raises if resultCode is not a success code.
+
+    data.go.kr endpoints vary on the success code: some return "00",
+    others "000". Both mean OK on the RTMSDataSvc family. Verified
+    against the live endpoint on 2026-06-08: RTMSDataSvcAptRent returns
+    resultCode "000" + resultMsg "OK"."""
     root = ET.fromstring(xml_text)
     code_el = root.find(".//resultCode")
     msg_el = root.find(".//resultMsg")
     code = (code_el.text or "").strip() if code_el is not None else ""
-    if code != "00":
+    if code not in ("00", "000"):
         msg = (msg_el.text or "").strip() if msg_el is not None else ""
         raise RuntimeError(
             f"MOLIT API error for LAWD_CD={lawd_cd} DEAL_YMD={ymd}: "
@@ -110,9 +115,47 @@ def _parse_response(xml_text: str, lawd_cd: str, ymd: str) -> tuple[list[dict], 
 
 
 def _pull_month(lawd_cd: str, ymd: str, service_key: str,
-                page_size: int = 1000, retries: int = 3,
-                timeout: int = 20) -> pd.DataFrame:
-    rows: list[dict] = []
+                cache_dir: Path | str | None = None,
+                page_size: int = 1000, retries: int = 3, timeout: int = 20
+                ) -> tuple[list[dict], int]:
+    """Pull one (LAWD_CD, DEAL_YMD) call from RTMSDataSvcAptRent.
+
+    Empirical contract verified 2026-06-08 against the live endpoint:
+
+    - Required params: `serviceKey`, `LAWD_CD`, `DEAL_YMD`.
+    - The endpoint **does** paginate. With no `numOfRows` sent, the
+      default page size is 10, while real urban gus easily exceed
+      1,000 transactions per month (마포구 202401 reported totalCount
+      1,137). Always send `numOfRows` (defaults to 1000 here, which
+      single-shots every Seoul gu-month observed in 2017–2024).
+    - `pageNo` is sent only when we have to loop because a single
+      gu-month exceeds page_size, which is rare. The endpoint accepts
+      pageNo + numOfRows together; sending just numOfRows is treated
+      as pageNo=1.
+    - Success code is `resultCode` "00" OR "000" (see _parse_response).
+
+    Returns (items, total) where items is a list of dicts (one per
+    transaction row) and total is the parsed totalCount from the
+    response body. items == flattened across pages; total == the
+    server-reported totalCount on page 1.
+
+    If cache_dir is given, caches the (multi-page-merged) result as
+    parquet at `cache_dir/{lawd_cd}_{ymd}.parquet` and reads from
+    cache on subsequent calls. Empty responses are NOT cached (a
+    future month may populate; caching empty would lock in a bogus
+    zero)."""
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{lawd_cd}_{ymd}.parquet"
+        if cache_path.exists():
+            df = pd.read_parquet(cache_path)
+            items_cached = df.to_dict("records") if not df.empty else []
+            return items_cached, len(items_cached)
+
+    items: list[dict] = []
+    total = 0
     page = 1
     while True:
         params = {
@@ -123,13 +166,13 @@ def _pull_month(lawd_cd: str, ymd: str, service_key: str,
             "pageNo": page,
         }
         last_err: Exception | None = None
-        items: list[dict] = []
-        total = 0
+        page_items: list[dict] = []
+        page_total = 0
         for attempt in range(retries):
             try:
                 r = requests.get(MOLIT_RENT_BASE_URL, params=params, timeout=timeout)
                 r.raise_for_status()
-                items, total = _parse_response(r.text, lawd_cd, ymd)
+                page_items, page_total = _parse_response(r.text, lawd_cd, ymd)
                 last_err = None
                 break
             except (requests.RequestException, ET.ParseError, RuntimeError) as e:
@@ -138,15 +181,22 @@ def _pull_month(lawd_cd: str, ymd: str, service_key: str,
         if last_err is not None:
             raise RuntimeError(
                 f"MOLIT pull failed after {retries} retries "
-                f"(LAWD_CD={lawd_cd} DEAL_YMD={ymd}): {last_err}"
+                f"(LAWD_CD={lawd_cd} DEAL_YMD={ymd} pageNo={page}): {last_err}"
             )
-        if not items:
-            break
-        rows.extend(items)
-        if len(rows) >= total or len(items) < page_size:
+        if page == 1:
+            total = page_total
+        items.extend(page_items)
+        # Stop when we've accumulated >= server-reported total, or when a
+        # page returned fewer rows than requested (the API will not
+        # supply more after that).
+        if not page_items or len(items) >= total or len(page_items) < page_size:
             break
         page += 1
-    return pd.DataFrame(rows)
+
+    if cache_path is not None and items:
+        pd.DataFrame(items).to_parquet(cache_path, index=False)
+
+    return items, total
 
 
 def _to_num(s: pd.Series) -> pd.Series:
@@ -205,15 +255,11 @@ def fetch_rent_panel(
         for y in years:
             for m in range(1, 13):
                 ymd = f"{y}{m:02d}"
-                chunk = cache_dir / f"{lawd_cd}_{ymd}.parquet"
-                if chunk.exists():
-                    df = pd.read_parquet(chunk)
-                else:
-                    df = _pull_month(lawd_cd, ymd, service_key)
-                    df.to_parquet(chunk, index=False)
-                    time.sleep(0.15)  # polite client
-                if not df.empty:
-                    frames.append(df.assign(_lawd_cd=lawd_cd, _ymd=ymd))
+                items, _ = _pull_month(lawd_cd, ymd, service_key, cache_dir)
+                if items:
+                    df = pd.DataFrame(items).assign(_lawd_cd=lawd_cd, _ymd=ymd)
+                    frames.append(df)
+                time.sleep(0.15)  # polite client; cheap on cache hits
 
     if not frames:
         raise RuntimeError(
