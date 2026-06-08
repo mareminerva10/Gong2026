@@ -72,6 +72,13 @@ DISPLAY_COLS = [
     "national_redevelopment_intensity_area_m2",
     "national_redevelopment_intensity_demolition_targets",
     "national_redevelopment_intensity_units_total",
+    "landuse_built_share",
+    "landuse_vegetation_share",
+    "landuse_infrastructure_share",
+    "landuse_transport_share",
+    "landuse_source",
+    "landuse_grain",
+    "landuse_status",
 ] + [f"{base}_{p}" for base in POLICY_AWARE_BASES for p in POLICY_SUFFIXES]
 
 
@@ -140,6 +147,7 @@ def load_payload(contract_path: Path,
                 "vulnerability_status",
                 "housing_stress_status",
                 "development_pressure_status",
+                "landuse_status",
                 "composite_score_status",
             ]
             if c in df.columns
@@ -380,8 +388,12 @@ INDEX_HTML = r"""<!doctype html>
           <option value="physical_yoy_cosine_dist" data-policy-aware="true">YoY cosine distance (Block 2)</option>
           <option value="physical_yoy_euclid" data-policy-aware="true">YoY Euclidean change (Block 2)</option>
           <option value="physical_embedding_norm" data-policy-aware="true">Embedding norm (Block 2)</option>
-          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Unsold mean units (Block 4b, gu-year)</option>
+          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Unsold mean units (Block 4b, gu-year broadcast)</option>
           <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
+          <option value="landuse_built_share" data-policy-aware="false">Land-use: built share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_vegetation_share" data-policy-aware="false">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_infrastructure_share" data-policy-aware="false">Land-use: infrastructure share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_transport_share" data-policy-aware="false">Land-use: transport share (Block 4c, gu-year broadcast)</option>
         </select>
       </label>
       <label>Artifact policy
@@ -540,6 +552,7 @@ function renderStatus() {
     ["Physical", s.physical_status?.[0], "live"],
     ["Housing stress", s.housing_stress_status?.[0], s.housing_stress_status?.[0] === "live" ? "live" : "warn"],
     ["Development", s.development_pressure_status?.[0], s.development_pressure_status?.[0] === "live" ? "live" : "warn"],
+    ["Land-use (gu broadcast)", s.landuse_status?.[0], s.landuse_status?.[0] === "live" ? "live" : "warn"],
     ["Tenure", s.tenure_status?.[0], "warn"],
     ["Vulnerability", s.vulnerability_status?.[0], "off"],
     ["Composite", s.composite_score_status?.[0], "off"],

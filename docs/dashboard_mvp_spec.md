@@ -56,7 +56,7 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
 | 4b Unsold housing stress | `statnuri_unsold_{mean,max,dec}_units` | StatNuri 2082/128 | gu × month, aggregated to gu × year | **LIVE** (Seoul gus, 2017–2024) |
-| 4c Spatial development companion | permits, completions, 정비구역 GIS, local redevelopment exposure | TBD | gu or dong × year | **NOT SCOPED** — see [B3] |
+| 4c Spatial development companion | `landuse_{built,vegetation,infrastructure,transport}_share` + raw 56-column audit retention | StatNuri 2300/2 | gu × year | **LIVE — gu-level broadcast / context** (not within-gu spatial variation; resolved 2026-06-08 via `molit_landuse_client.py`) |
 
 ## 5. Grain-mismatch and map-rendering rules
 
@@ -153,11 +153,11 @@ Use the final chosen dong geography end-to-end (either 법정동 or 행정동, *
 |---|---|---|---|
 | B1 | 전월세 source not settled — data.go.kr key absent, no validated StatNuri tenure form yet | USER-SIDE | Block 1 unparked |
 | B2 | Vulnerability block has no source candidate | PROJECT-SCOPING | Block 3 unparked |
-| B3 | No spatial companion for Block 4 (permits / completions / 정비구역 GIS not yet sourced) | PROJECT-SCOPING | Block 4 gains spatial development variance |
+| B3 | Spatial companion for Block 4 at **gu-year context** grain (StatNuri 2300/2 `landuse_*_share`) | RESOLVED 2026-06-08 (gu-year only) | Block 4 has gu-level spatial variation; `development_pressure_spatial_variation = "gu"`. Dong-grain overlay (designation polygons) remains parked under KOGL-4 / empty file slots; not in B3 scope. |
 | B4 | Polygon source and pilot manifest | RESOLVED 2026-05-27 | D001 AL EMD legal-dong source selected; 마포구+강남구 pilot manifest implemented |
 | B5 | Earth Engine reduction cost not estimated; ~3,392 polygon-year reductions implied at full Seoul | RESOLVED 2026-05-27 | Pilot run completed: 320 polygon-years in 677.9s (~2.12s each); full-Seoul runtime still needs explicit authorization |
 | B6 | Dashboard handoff contract missing | RESOLVED 2026-05-27 | `dashboard_pilot_contract.py` emits a non-forecast, provenance-rich pilot table for UI/API work |
 
-Resolving B1 unparks Block 1. Resolving B3 unlocks a spatial Block 4 layer. B4, B5, and B6 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is explicit product authorization after reviewing the completed pilot QA. B2 is independent and lowest-priority for the MVP.
+Resolving B1 unparks Block 1. Resolving B3 unlocked a gu-year Block 4c layer on 2026-06-08 (the dong-grain designation overlay remains parked separately). B4, B5, and B6 are resolved for the pilot; the remaining gate for any full-Seoul Block 2 expansion is explicit product authorization after reviewing the completed pilot QA. B2 is independent and lowest-priority for the MVP.
 
-The MVP can ship descriptively with Blocks 4a + 4b live and Blocks 1, 2, 3, 4c marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.
+The MVP can ship descriptively with Blocks 4a + 4b + 4c (gu-context) live and Blocks 1, 2, 3 marked parked/not-scoped. Whether that shippable state is desirable is a separate product decision.

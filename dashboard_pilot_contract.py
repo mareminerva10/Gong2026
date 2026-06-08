@@ -34,6 +34,7 @@ DEFAULT_ALPHAEARTH = DATA / "seoul_pilot_alphaearth.parquet"
 DEFAULT_QA = DATA / "seoul_pilot_alphaearth_qa.json"
 DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
+DEFAULT_LANDUSE = DATA / "statnuri_landuse_panel.parquet"
 DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
 DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
 
@@ -154,6 +155,15 @@ def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["development_pressure_status"] = "missing_local_artifact"
     out["development_pressure_spatial_variation"] = "none"
 
+    # Block 4c (gu-year land-use context). Defaults to missing-artifact.
+    # When the StatNuri 2300/2 panel is present, merge_optional_landuse
+    # flips landuse_status to "live" and development_pressure_spatial_variation
+    # from "none" to "gu". This is gu-level broadcast, NOT a dong-grain
+    # designation overlay; see docs/dashboard_mvp_spec.md §4 / §5.
+    out["landuse_source"] = "statnuri_2300_2"
+    out["landuse_grain"] = "gu-year"
+    out["landuse_status"] = "missing_local_artifact"
+
     out["dashboard_claim_scope"] = "descriptive_physical_change_only"
     out["composite_score_status"] = "not_computed"
     return out
@@ -203,6 +213,61 @@ def merge_optional_residualized(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     keep = ["emd_cd", "year", *policy_cols, "metric_year_fe_scope"]
     keep = [c for c in keep if c in res.columns]
     return df.merge(res[keep], on=["emd_cd", "year"], how="left")
+
+
+def merge_optional_landuse(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Merge the StatNuri 2300/2 gu-year land-use panel (Block 4c) if its
+    parquet is present. The panel is at gu × year grain — 25 Seoul gus × 8
+    years — so the merge broadcasts each gu's land-use shares to every
+    dong in that gu via lawd_cd × year. This is **gu-level broadcast /
+    context**, not within-gu spatial variation; the dashboard MUST label
+    these signals accordingly (per docs/dashboard_mvp_spec.md §5).
+
+    Exposed columns are the four descriptive shares plus the gu's total
+    area + parcel count (audit totals only). The 56 per-category raw
+    retention columns stay in the panel parquet for audit but are NOT
+    merged into the contract; they would dilute the dashboard surface
+    and are not policy-selectable.
+
+    When the merge succeeds, also flips
+    `development_pressure_spatial_variation` from 'none' to 'gu' — Block
+    4c (the spatial development companion in the four-block model) has
+    landed at gu-year grain. This is NOT a dong-grain claim."""
+    if not path.exists():
+        return df
+    lu = pd.read_parquet(path).copy()
+    required = {"lawd_cd", "year"}
+    missing = required - set(lu.columns)
+    if missing:
+        raise ValueError(
+            f"landuse panel missing required columns: {sorted(missing)}")
+    lu["lawd_cd"] = lu["lawd_cd"].astype(str)
+    lu["year"] = lu["year"].astype(int)
+    surface_cols = [
+        "landuse_built_share",
+        "landuse_vegetation_share",
+        "landuse_infrastructure_share",
+        "landuse_transport_share",
+        "area_total_m2",
+        "parcels_total",
+    ]
+    keep = [c for c in surface_cols if c in lu.columns]
+    if not keep:
+        raise ValueError(
+            "landuse panel has no recognised surface columns "
+            f"(landuse_*_share / area_total_m2 / parcels_total). "
+            f"Available: {sorted(lu.columns)[:8]}...")
+    out = df.merge(
+        lu[["lawd_cd", "year", *keep]],
+        on=["lawd_cd", "year"],
+        how="left",
+    )
+    out["landuse_status"] = np.where(
+        out[keep].notna().any(axis=1), "live", "missing_join_row")
+    out["development_pressure_spatial_variation"] = np.where(
+        out["landuse_status"] == "live", "gu",
+        out["development_pressure_spatial_variation"])
+    return out
 
 
 def merge_optional_redev(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -272,13 +337,25 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
         "development_pressure_grain",
         "development_pressure_status",
         "development_pressure_spatial_variation",
+        "landuse_source",
+        "landuse_grain",
+        "landuse_status",
         "dashboard_claim_scope",
         "composite_score_status",
     ]
+    landuse_surface = (
+        "landuse_built_share",
+        "landuse_vegetation_share",
+        "landuse_infrastructure_share",
+        "landuse_transport_share",
+        "area_total_m2",
+        "parcels_total",
+    )
     optional_cols = [
         c for c in df.columns
         if c.startswith("statnuri_unsold_")
         or c.startswith("national_redevelopment_intensity_")
+        or c in landuse_surface
     ]
     # Policy-suffixed physical-change columns from the residualized layer.
     policy_cols = [c for c in df.columns
@@ -341,6 +418,7 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
         "vulnerability_status": "not_scoped",
         "housing_stress_status": "missing_local_artifact",
         "development_pressure_status": "missing_local_artifact",
+        "landuse_status": "missing_local_artifact",
         "composite_score_status": "not_computed",
     }
     for col, expected in expected_status.items():
@@ -413,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--qa", default=str(DEFAULT_QA))
     ap.add_argument("--unsold", default=str(DEFAULT_UNSOLD))
     ap.add_argument("--redev", default=str(DEFAULT_REDEV))
+    ap.add_argument("--landuse", default=str(DEFAULT_LANDUSE))
     ap.add_argument("--residualized", default=str(DEFAULT_RESIDUALIZED))
     ap.add_argument("--output", default=str(DEFAULT_OUTPUT))
     args = ap.parse_args(argv)
@@ -423,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
     contract = merge_optional_residualized(contract, Path(args.residualized))
     contract = merge_optional_unsold(contract, Path(args.unsold))
     contract = merge_optional_redev(contract, Path(args.redev))
+    contract = merge_optional_landuse(contract, Path(args.landuse))
     contract = select_columns(contract)
 
     validation = validate_contract(contract, YEARS)
