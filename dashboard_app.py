@@ -74,6 +74,13 @@ DISPLAY_COLS = [
     "completed_unsold_source",
     "completed_unsold_grain",
     "completed_unsold_status",
+    "tenure_n_rent_deals",
+    "tenure_n_wolse",
+    "tenure_n_jeonse",
+    "tenure_wolse_ratio",
+    "tenure_median_deposit_per_m2",
+    "tenure_median_monthly_rent_per_m2",
+    "tenure_scope",
     "national_redevelopment_intensity_zone_count",
     "national_redevelopment_intensity_area_m2",
     "national_redevelopment_intensity_demolition_targets",
@@ -398,6 +405,10 @@ INDEX_HTML = r"""<!doctype html>
           <option value="statnuri_unsold_mean_units" data-policy-aware="false">Pre-completion unsold mean (Block 4b, gu-year broadcast)</option>
           <option value="statnuri_completed_unsold_mean_units" data-policy-aware="false">Post-completion unsold mean (Block 4b, gu-year broadcast)</option>
           <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
+          <option value="tenure_wolse_ratio" data-policy-aware="false">Wolse ratio (Block 1, apartment-only, gu-year broadcast)</option>
+          <option value="tenure_n_rent_deals" data-policy-aware="false">Apt rent deals (Block 1, apartment-only, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2" data-policy-aware="false">Apt median deposit/m² 만원 (Block 1, apartment-only, gu-year broadcast)</option>
+          <option value="tenure_median_monthly_rent_per_m2" data-policy-aware="false">Apt median monthly rent/m² 만원 (Block 1, apartment-only, gu-year broadcast)</option>
           <option value="landuse_built_share" data-policy-aware="false">Land-use: built share (Block 4c, gu-year broadcast)</option>
           <option value="landuse_vegetation_share" data-policy-aware="false">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
           <option value="landuse_infrastructure_share" data-policy-aware="false">Land-use: infrastructure share (Block 4c, gu-year broadcast)</option>
@@ -556,13 +567,20 @@ function initControls() {
 
 function renderStatus() {
   const s = summary.statuses;
+  const tenureStatus = s.tenure_status?.[0];
+  const tenureBadgeClass =
+    tenureStatus === "live_partial" ? "warn" :
+    tenureStatus === "live" ? "live" : "warn";
+  const tenureLabel = tenureStatus === "live_partial"
+    ? "Tenure (apt-only)"
+    : "Tenure";
   const badges = [
     ["Physical", s.physical_status?.[0], "live"],
     ["Pre-completion unsold", s.housing_stress_status?.[0], s.housing_stress_status?.[0] === "live" ? "live" : "warn"],
     ["Post-completion unsold", s.completed_unsold_status?.[0], s.completed_unsold_status?.[0] === "live" ? "live" : "warn"],
     ["Development", s.development_pressure_status?.[0], s.development_pressure_status?.[0] === "live" ? "live" : "warn"],
     ["Land-use (gu broadcast)", s.landuse_status?.[0], s.landuse_status?.[0] === "live" ? "live" : "warn"],
-    ["Tenure", s.tenure_status?.[0], "warn"],
+    [tenureLabel, tenureStatus, tenureBadgeClass],
     ["Vulnerability", s.vulnerability_status?.[0], "off"],
     ["Composite", s.composite_score_status?.[0], "off"],
   ];

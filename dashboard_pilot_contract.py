@@ -36,6 +36,7 @@ DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
 DEFAULT_COMPLETED_UNSOLD = DATA / "statnuri_completed_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
 DEFAULT_LANDUSE = DATA / "statnuri_landuse_panel.parquet"
+DEFAULT_TENURE = DATA / "wolse_molit.parquet"
 DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
 DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
 
@@ -139,9 +140,18 @@ def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     # the UI flag_2022 signal.
     out["physical_artifact_policy"] = "metric_year_fe"
 
-    out["tenure_source"] = "parked"
-    out["tenure_grain"] = "parked"
-    out["tenure_status"] = "parked"
+    # Block 1 (tenure pressure). Source resolved 2026-06-09 via
+    # RTMSDataSvcAptRent (apartment-only). When the local panel is
+    # present, merge_optional_tenure flips tenure_status from
+    # "missing_local_artifact" to "live_partial" — partial because the
+    # scope is apartment-only and single/multi-family + officetel rent
+    # remain on sibling endpoints not yet integrated. Per the user spec,
+    # tenure_scope='apartment_only' is carried explicitly so downstream
+    # consumers cannot conflate this with all-tenure context.
+    out["tenure_source"] = "data_go_kr_rtms_apt"
+    out["tenure_grain"] = "gu-year"
+    out["tenure_scope"] = "apartment_only"
+    out["tenure_status"] = "missing_local_artifact"
 
     out["vulnerability_source"] = "not_scoped"
     out["vulnerability_grain"] = "not_scoped"
@@ -223,6 +233,73 @@ def merge_optional_residualized(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     keep = ["emd_cd", "year", *policy_cols, "metric_year_fe_scope"]
     keep = [c for c in keep if c in res.columns]
     return df.merge(res[keep], on=["emd_cd", "year"], how="left")
+
+
+def merge_optional_tenure(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Merge the apartment-only Seoul tenure panel (Block 1) if its
+    parquet is present.
+
+    The panel is gu × month; this merge annualizes it on the fly into
+    gu × year, then broadcasts onto dong-year rows via lawd_cd × year
+    (gu-level broadcast — the underlying source is gu-grain, not
+    dong-grain). When the merge succeeds, tenure_status flips from
+    'missing_local_artifact' to 'live_partial': partial because the
+    scope is apartment-only (RTMSDataSvcAptRent). Single / multi-family
+    and officetel rent flow through sibling endpoints not yet
+    integrated; do not relabel 'live_partial' as 'live' until those
+    paths land.
+
+    Exposed columns are the six core tenure metrics, prefixed with
+    `tenure_` so they don't collide with the housing-stress block in
+    the contract surface:
+
+      tenure_n_rent_deals       (annual sum)
+      tenure_n_wolse             (annual sum)
+      tenure_n_jeonse            (annual sum)
+      tenure_wolse_ratio         (recomputed from annual sums, NOT
+                                  averaged from the monthly ratios)
+      tenure_median_deposit_per_m2       (median of monthly medians)
+      tenure_median_monthly_rent_per_m2  (median of monthly medians,
+                                          wolse-only sub-population)"""
+    if not path.exists():
+        return df
+    monthly = pd.read_parquet(path).copy()
+    required = {"lawd_cd", "year", "month", "n_rent_deals", "n_wolse",
+                "wolse_ratio", "median_deposit_per_m2",
+                "median_monthly_rent_per_m2"}
+    missing = required - set(monthly.columns)
+    if missing:
+        raise ValueError(
+            f"tenure panel missing required columns: {sorted(missing)}")
+    monthly["lawd_cd"] = monthly["lawd_cd"].astype(str)
+    monthly["year"] = monthly["year"].astype(int)
+
+    # Inline annual rollup so the contract layer doesn't import
+    # molit_client (keeps contract code import-light).
+    by = monthly.groupby(["lawd_cd", "year"])
+    annual = pd.DataFrame({
+        "tenure_n_rent_deals": by["n_rent_deals"].sum().astype("int64"),
+        "tenure_n_wolse": by["n_wolse"].sum().astype("int64"),
+        "tenure_median_deposit_per_m2": by["median_deposit_per_m2"].median(),
+        "tenure_median_monthly_rent_per_m2": by["median_monthly_rent_per_m2"].median(),
+    }).reset_index()
+    annual["tenure_n_jeonse"] = (annual["tenure_n_rent_deals"]
+                                  - annual["tenure_n_wolse"])
+    annual["tenure_wolse_ratio"] = (annual["tenure_n_wolse"]
+                                     / annual["tenure_n_rent_deals"])
+    value_cols = [c for c in annual.columns
+                  if c.startswith("tenure_")]
+    out = df.merge(
+        annual[["lawd_cd", "year", *value_cols]],
+        on=["lawd_cd", "year"],
+        how="left",
+    )
+    out["tenure_status"] = np.where(
+        out[value_cols].notna().any(axis=1),
+        "live_partial",   # apartment-only scope; never 'live' from this source
+        "missing_join_row",
+    )
+    return out
 
 
 def merge_optional_completed_unsold(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -379,6 +456,7 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
     block_status_cols = [
         "tenure_source",
         "tenure_grain",
+        "tenure_scope",
         "tenure_status",
         "vulnerability_source",
         "vulnerability_grain",
@@ -412,6 +490,8 @@ def select_columns(df: pd.DataFrame) -> pd.DataFrame:
         if c.startswith("statnuri_unsold_")
         or c.startswith("statnuri_completed_unsold_")
         or c.startswith("national_redevelopment_intensity_")
+        or c.startswith("tenure_n_") or c.startswith("tenure_wolse_")
+        or c.startswith("tenure_median_")
         or c in landuse_surface
     ]
     # Policy-suffixed physical-change columns from the residualized layer.
@@ -472,7 +552,7 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
 
     expected_status = {
         "physical_status": "live",
-        "tenure_status": "parked",
+        "tenure_status": "missing_local_artifact",
         "vulnerability_status": "not_scoped",
         "housing_stress_status": "missing_local_artifact",
         "development_pressure_status": "missing_local_artifact",
@@ -483,7 +563,12 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
     for col, expected in expected_status.items():
         actual = sorted(df[col].astype(str).unique().tolist())
         if actual != [expected]:
-            if expected == "missing_local_artifact" and actual == ["live"]:
+            # When a panel was merged successfully, the status moves from
+            # the missing-artifact default to "live" (or "live_partial"
+            # for a scope-restricted source like the apartment-only
+            # tenure block). Treat both as warnings, not errors.
+            if (expected == "missing_local_artifact"
+                    and actual in (["live"], ["live_partial"])):
                 warnings.append(f"{col} includes live artifact rows: {actual}")
             else:
                 errors.append(f"{col} expected {expected}, got {actual}")
@@ -552,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--completed-unsold", default=str(DEFAULT_COMPLETED_UNSOLD))
     ap.add_argument("--redev", default=str(DEFAULT_REDEV))
     ap.add_argument("--landuse", default=str(DEFAULT_LANDUSE))
+    ap.add_argument("--tenure", default=str(DEFAULT_TENURE))
     ap.add_argument("--residualized", default=str(DEFAULT_RESIDUALIZED))
     ap.add_argument("--output", default=str(DEFAULT_OUTPUT))
     args = ap.parse_args(argv)
@@ -565,6 +651,7 @@ def main(argv: list[str] | None = None) -> int:
                                                Path(args.completed_unsold))
     contract = merge_optional_redev(contract, Path(args.redev))
     contract = merge_optional_landuse(contract, Path(args.landuse))
+    contract = merge_optional_tenure(contract, Path(args.tenure))
     contract = select_columns(contract)
 
     validation = validate_contract(contract, YEARS)

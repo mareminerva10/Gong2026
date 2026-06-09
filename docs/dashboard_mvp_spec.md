@@ -51,7 +51,7 @@ Block 4 deliberately contains both supply-side (redev intensity) and demand-side
 
 | Block | Variable(s) | Source | Grain | Status (2026-05-27) |
 |---|---|---|---|---|
-| 1 Tenure pressure | `wolse_ratio`, `n_wolse`, `n_jeonse`, `median_deposit_per_m2`, `median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` OR StatNuri tenure-split form | gu × month (target) | **PARKED** — see [B1] |
+| 1 Tenure pressure (apartment-only) | `tenure_n_rent_deals`, `tenure_n_wolse`, `tenure_n_jeonse`, `tenure_wolse_ratio`, `tenure_median_deposit_per_m2`, `tenure_median_monthly_rent_per_m2` | data.go.kr `RTMSDataSvcAptRent` (dataset 15126474) | gu × month, annualized to gu × year for the dashboard | **LIVE (partial: apartment-only)** — resolved 2026-06-09 via `molit_client.build_seoul_tenure_panel`. Single/multi-family and officetel rent endpoints are sibling APIs not yet integrated; tenure_scope = 'apartment_only', tenure_status = 'live_partial'. |
 | 2 Physical change | `physical_embedding_norm`, `physical_yoy_angular`, `physical_yoy_cosine_dist`, `physical_yoy_euclid`, within-gu anomaly rank/z-score; **not** the rejected 1-D axis | Earth Engine `GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL` | legal-dong × year | **LIVE — completed 마포구+강남구 pilot cache and dashboard contract**; full-Seoul expansion requires explicit authorization |
 | 3 Vulnerability | TBD (KOSIS demographics, household income, age structure, etc.) | TBD | TBD | **NOT SCOPED** — see [B2] |
 | 4a Redev intensity | `national_redevelopment_intensity_*` (7 vars) | StatNuri 6189/1 | **national × year** | **LIVE — but no spatial variation**; see §5 |
@@ -152,7 +152,7 @@ Use the final chosen dong geography end-to-end (either 법정동 or 행정동, *
 
 | ID | Blocker | Type | Resolves |
 |---|---|---|---|
-| B1 | 전월세 source not settled — data.go.kr key absent, no validated StatNuri tenure form yet | USER-SIDE | Block 1 unparked |
+| B1 | 전월세 source — apartment-rent path resolved via `RTMSDataSvcAptRent`; single/multi-family + officetel paths still parked | RESOLVED 2026-06-09 (apartment-only) | Block 1 live_partial; promotion to all-tenure `live` requires building sibling clients for `RTMSDataSvcSingleHouseRent` and the officetel rent endpoint |
 | B2 | Vulnerability block has no source candidate | PROJECT-SCOPING | Block 3 unparked |
 | B3 | Spatial companion for Block 4 at **gu-year context** grain (StatNuri 2300/2 `landuse_*_share`) | RESOLVED 2026-06-08 (gu-year only) | Block 4 has gu-level spatial variation; `development_pressure_spatial_variation = "gu"`. Dong-grain overlay (designation polygons) remains parked under KOGL-4 / empty file slots; not in B3 scope. |
 | B4 | Polygon source and pilot manifest | RESOLVED 2026-05-27 | D001 AL EMD legal-dong source selected; 마포구+강남구 pilot manifest implemented |
