@@ -195,9 +195,20 @@ def _pull_month(lawd_cd: str, ymd: str, service_key: str,
                 last_err = e
                 time.sleep(1.5 * (attempt + 1))
         if last_err is not None:
+            # CRITICAL: do NOT interpolate `last_err` directly into the
+            # message. requests.ConnectionError.__str__ embeds the full
+            # request URL, which contains the serviceKey query parameter.
+            # A network blip would otherwise leak the credential into
+            # any log capture / output file / chat paste. Belt-and-braces:
+            # scrub the key substring from the exception text as well.
+            err_class = type(last_err).__name__
+            err_text = str(last_err)
+            if service_key and service_key in err_text:
+                err_text = err_text.replace(service_key, "<redacted>")
             raise RuntimeError(
                 f"MOLIT pull failed after {retries} retries "
-                f"(LAWD_CD={lawd_cd} DEAL_YMD={ymd} pageNo={page}): {last_err}"
+                f"(LAWD_CD={lawd_cd} DEAL_YMD={ymd} pageNo={page}): "
+                f"{err_class}: {err_text}"
             )
         if page == 1:
             total = page_total
