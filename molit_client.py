@@ -38,6 +38,7 @@ import argparse
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -70,6 +71,79 @@ F_UMDNM_EN = "umdNm"            # legal-dong name (e.g. "공덕동")
 F_SGGCD_EN = "sggCd"            # 5-digit lawd_cd echoed in each item
 F_DEAL_YEAR_EN = "dealYear"
 F_DEAL_MONTH_EN = "dealMonth"
+
+
+# === Housing-type registry ===============================================
+#
+# Smoke-verified live 2026-06-09 against LAWD_CD=11440 DEAL_YMD=202401;
+# see docs/rtms_siblings_probe_2026-06-09.md for the probe verdict.
+#
+# Each entry encodes the per-housing-type endpoint and the *area-field
+# semantics* (which differ across the family — see area_kind below).
+# Every sibling shares the same five core item fields (deposit,
+# monthlyRent, umdNm, sggCd, dealYear, dealMonth); only the area field
+# differs. The success-code accept set is global ({"00", "000"}) and
+# lives in _parse_response, not here.
+
+@dataclass(frozen=True)
+class HousingTypeSpec:
+    """One row of the housing-type registry.
+
+    area_kind values:
+      - 'exclusive_use': area_field is `excluUseAr` (per-unit exclusive
+        area in m²). Per-m² metrics computed normally.
+      - 'total_floor':   area_field is `totalFloorAr` (WHOLE-BUILDING
+        gross floor area in m²). Per-m² metrics are NOT computed and
+        emit NaN — totalFloorAr is not comparable to excluUseAr across
+        housing types, so silently using it would create false
+        comparability with apt/rh/offi. Only counts and wolse_ratio
+        are emitted for total_floor housing types. SH-specific
+        *_per_total_floor_m2 metrics are out of scope for the initial
+        multi-housing tenure expansion (see
+        docs/rtms_siblings_probe_2026-06-09.md §'Findings'). """
+
+    housing_type: str
+    dataset_id: str
+    url: str
+    area_field: str
+    area_kind: str
+    source_tag: str
+
+
+HOUSING_TYPE_REGISTRY: dict[str, HousingTypeSpec] = {
+    "apt": HousingTypeSpec(
+        housing_type="apt",
+        dataset_id="15126474",
+        url="https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent",
+        area_field="excluUseAr",
+        area_kind="exclusive_use",
+        source_tag="data_go_kr_rtms_apt",
+    ),
+    "rowhouse_multifamily": HousingTypeSpec(
+        housing_type="rowhouse_multifamily",
+        dataset_id="15126473",
+        url="https://apis.data.go.kr/1613000/RTMSDataSvcRHRent/getRTMSDataSvcRHRent",
+        area_field="excluUseAr",
+        area_kind="exclusive_use",
+        source_tag="data_go_kr_rtms_rh",
+    ),
+    "single_detached": HousingTypeSpec(
+        housing_type="single_detached",
+        dataset_id="15126472",
+        url="https://apis.data.go.kr/1613000/RTMSDataSvcSHRent/getRTMSDataSvcSHRent",
+        area_field="totalFloorAr",
+        area_kind="total_floor",
+        source_tag="data_go_kr_rtms_sh",
+    ),
+    "officetel": HousingTypeSpec(
+        housing_type="officetel",
+        dataset_id="15126475",
+        url="https://apis.data.go.kr/1613000/RTMSDataSvcOffiRent/getRTMSDataSvcOffiRent",
+        area_field="excluUseAr",
+        area_kind="exclusive_use",
+        source_tag="data_go_kr_rtms_offi",
+    ),
+}
 
 
 def lawd_cd_from_dong_code(dong_code: int | str) -> str:
@@ -132,11 +206,20 @@ def _parse_response(xml_text: str, lawd_cd: str, ymd: str) -> tuple[list[dict], 
 
 def _pull_month(lawd_cd: str, ymd: str, service_key: str,
                 cache_dir: Path | str | None = None,
-                page_size: int = 1000, retries: int = 3, timeout: int = 20
+                page_size: int = 1000, retries: int = 3, timeout: int = 20,
+                *, url: str = MOLIT_RENT_BASE_URL,
                 ) -> tuple[list[dict], int]:
-    """Pull one (LAWD_CD, DEAL_YMD) call from RTMSDataSvcAptRent.
+    """Pull one (LAWD_CD, DEAL_YMD) call from an RTMS rent endpoint.
 
-    Empirical contract verified 2026-06-08 against the live endpoint:
+    The `url` kwarg lets the same puller hit any sibling endpoint in
+    the RTMS rent family (apt / RH / SH / Offi); default is the apt
+    URL so the legacy `fetch_rent_panel` path stays unchanged. For the
+    Seoul-wide tenure builder, pass the URL from the housing-type
+    registry entry. Per-endpoint smoke results live in
+    docs/rtms_siblings_probe_2026-06-09.md.
+
+    Empirical contract verified 2026-06-08 (apt) and 2026-06-09
+    (RH/SH/Offi) against the live endpoints:
 
     - Required params: `serviceKey`, `LAWD_CD`, `DEAL_YMD`.
     - The endpoint **does** paginate. With no `numOfRows` sent, the
@@ -186,7 +269,7 @@ def _pull_month(lawd_cd: str, ymd: str, service_key: str,
         page_total = 0
         for attempt in range(retries):
             try:
-                r = requests.get(MOLIT_RENT_BASE_URL, params=params, timeout=timeout)
+                r = requests.get(url, params=params, timeout=timeout)
                 r.raise_for_status()
                 page_items, page_total = _parse_response(r.text, lawd_cd, ymd)
                 last_err = None
@@ -258,43 +341,102 @@ except ImportError:  # pragma: no cover - defensive import; module always presen
 
 SEOUL_LAWD_CD_TO_GU = {v: k for k, v in _SEOUL_GU_LAWD_CD.items()}
 
-DEFAULT_TENURE_OUTPUT = Path("data/wolse_molit.parquet")
-DEFAULT_TENURE_CACHE = Path("data/molit_rent_cache")
+DEFAULT_TENURE_CACHE_ROOT = Path("data/molit_rent_cache")
+
+# Per-housing-type defaults. apt is special-cased to the legacy path
+# (data/wolse_molit.parquet) so the existing dashboard pipeline keeps
+# reading the apt-only artifact unchanged through step 2. Siblings get
+# distinct per-type filenames. The combined panel
+# (data/rtms_rent_panel.parquet) is built in step 3 by a separate
+# combiner, not by this per-type builder.
+DEFAULT_TENURE_OUTPUTS: dict[str, Path] = {
+    "apt": Path("data/wolse_molit.parquet"),
+    "rowhouse_multifamily": Path("data/wolse_molit_rowhouse_multifamily.parquet"),
+    "single_detached": Path("data/wolse_molit_single_detached.parquet"),
+    "officetel": Path("data/wolse_molit_officetel.parquet"),
+}
+
+# Legacy aliases retained so external imports don't break.
+DEFAULT_TENURE_OUTPUT = DEFAULT_TENURE_OUTPUTS["apt"]
+DEFAULT_TENURE_CACHE = DEFAULT_TENURE_CACHE_ROOT
+
+
+def _default_cache_dir(housing_type: str) -> Path:
+    """Per-housing-type cache layout:
+    `data/molit_rent_cache/{housing_type}/{lawd_cd}_{ymd}.parquet`.
+
+    The pre-step-2 apt cache lived at the root
+    `data/molit_rent_cache/{lawd_cd}_{ymd}.parquet` and is now
+    orphaned (gitignored — leave in place or `mv` manually). A fresh
+    `build_seoul_tenure_panel('apt', ...)` invocation will re-cache
+    under the new namespaced path."""
+    return DEFAULT_TENURE_CACHE_ROOT / housing_type
 
 
 def _classify_and_normalize(items: list[dict], lawd_cd: str,
-                            year: int, month: int) -> pd.DataFrame:
+                            year: int, month: int,
+                            *, spec: HousingTypeSpec | None = None,
+                            ) -> pd.DataFrame:
     """Turn raw API items into a structured DataFrame with parsed numeric
     fields and the wolse/jeonse classification.
+
+    `spec` controls per-housing-type behavior. If None (legacy callers),
+    defaults to the apt spec — preserves prior apartment-only behavior.
 
     Classification rule (per user spec, 2026-06-08):
       - monthlyRent == 0 (parsed) OR blank → jeonse
       - monthlyRent > 0                    → wolse
 
-    Numeric parsing strips thousands separators. Per-m² metrics fall to
-    NaN where excluUseAr is 0 or missing (avoids divide-by-zero
-    contaminating medians)."""
+    Numeric parsing strips thousands separators.
+
+    Per-m² metrics:
+      - spec.area_kind == 'exclusive_use' (apt / RH / Offi):
+          deposit_per_m2 and monthly_per_m2 computed normally; fall to
+          NaN where the area field is 0 or missing (avoids
+          divide-by-zero contaminating medians).
+      - spec.area_kind == 'total_floor' (SH only):
+          per-m² metrics are NOT computed and emit NaN by construction.
+          totalFloorAr is whole-building gross area and is NOT
+          comparable to per-unit excluUseAr from other housing types,
+          so silently dividing by it would create false comparability
+          (see docs/rtms_siblings_probe_2026-06-09.md). The area
+          column is still parsed into excl_use_m2 for audit but NOT
+          used as a per-m² denominator."""
+    if spec is None:
+        spec = HOUSING_TYPE_REGISTRY["apt"]
     if not items:
         return pd.DataFrame()
     df = pd.DataFrame(items)
     # Numeric casts — required for all downstream metrics.
-    for col in (F_DEPOSIT_EN, F_MONTHLY_EN, F_AREA_EN):
+    required = (F_DEPOSIT_EN, F_MONTHLY_EN, spec.area_field)
+    for col in required:
         if col not in df.columns:
             raise RuntimeError(
-                f"RTMSDataSvcAptRent response is missing expected field "
-                f"{col!r}. LAWD_CD={lawd_cd} {year}-{month:02d}. "
+                f"{spec.url.rsplit('/', 1)[-1]} response is missing expected "
+                f"field {col!r}. LAWD_CD={lawd_cd} {year}-{month:02d}. "
                 f"Columns seen: {sorted(df.columns)[:20]}...")
     df["deposit_manwon"] = _to_num(df[F_DEPOSIT_EN])
     df["monthly_rent_manwon"] = _to_num(df[F_MONTHLY_EN]).fillna(0)
-    df["excl_use_m2"] = _to_num(df[F_AREA_EN])
+    df["excl_use_m2"] = _to_num(df[spec.area_field])
     df["is_wolse"] = (df["monthly_rent_manwon"] > 0).astype("int8")
-    # Per-m² (deposit / monthly_rent normalized by exclusive-use area).
-    valid_area = df["excl_use_m2"].where(df["excl_use_m2"] > 0)
-    df["deposit_per_m2"] = df["deposit_manwon"] / valid_area
-    df["monthly_per_m2"] = df["monthly_rent_manwon"] / valid_area
+    if spec.area_kind == "exclusive_use":
+        # Per-m² (deposit / monthly_rent normalized by per-unit exclusive area).
+        valid_area = df["excl_use_m2"].where(df["excl_use_m2"] > 0)
+        df["deposit_per_m2"] = df["deposit_manwon"] / valid_area
+        df["monthly_per_m2"] = df["monthly_rent_manwon"] / valid_area
+    elif spec.area_kind == "total_floor":
+        # SHRent only exposes whole-building totalFloorAr; emit NaN
+        # rather than fabricate a per-unit per-m² figure.
+        df["deposit_per_m2"] = float("nan")
+        df["monthly_per_m2"] = float("nan")
+    else:
+        raise RuntimeError(
+            f"Unknown area_kind {spec.area_kind!r} on spec "
+            f"{spec.housing_type!r}; expected 'exclusive_use' or 'total_floor'.")
     df["lawd_cd"] = str(lawd_cd)
     df["year"] = int(year)
     df["month"] = int(month)
+    df["housing_type"] = spec.housing_type
     return df
 
 
@@ -333,34 +475,49 @@ def _aggregate_to_gu_month(transactions: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_seoul_tenure_panel(
+        housing_type: str,
         years: Iterable[int],
-        cache_dir: Path | str = DEFAULT_TENURE_CACHE,
-        output: Path | str = DEFAULT_TENURE_OUTPUT,
+        cache_dir: Path | str | None = None,
+        output: Path | str | None = None,
         *,
         gus: Iterable[str] | None = None,
         service_key: str | None = None,
         polite_sleep_s: float = 0.15,
 ) -> pd.DataFrame:
-    """Build the apartment-only Seoul live tenure panel at gu × month grain.
+    """Build a per-housing-type Seoul live tenure panel at gu × month grain.
 
-    For each (lawd_cd, ymd) in (gus × years × 12 months), pulls
-    RTMSDataSvcAptRent, parses + classifies + computes per-m² metrics,
-    aggregates to gu-month panel rows with the six core tenure metrics:
+    `housing_type` selects the endpoint and per-m² semantics from
+    HOUSING_TYPE_REGISTRY. Valid values: 'apt', 'rowhouse_multifamily',
+    'single_detached', 'officetel'.
+
+    For each (lawd_cd, ymd) in (gus × years × 12 months), pulls the
+    chosen sibling endpoint, parses + classifies + (conditionally)
+    computes per-m² metrics, then aggregates to gu-month panel rows:
 
       n_rent_deals, n_wolse, n_jeonse, wolse_ratio,
       median_deposit_per_m2, median_monthly_rent_per_m2
 
-    Carries housing_type='apt' and source='data_go_kr_rtms_apt' on every
-    row so downstream consumers cannot conflate this with the missing
-    single/multi-family or officetel tenure paths. The dashboard
-    contract should join this with tenure_status='live_partial' and
-    tenure_scope='apartment_only' (per the 2026-06-08 user spec).
+    Per-m² metrics emit NaN for housing types where
+    spec.area_kind == 'total_floor' (currently single_detached only)
+    — see HousingTypeSpec docstring and
+    docs/rtms_siblings_probe_2026-06-09.md for the rationale.
+
+    Carries housing_type and source columns on every row so downstream
+    consumers cannot silently conflate types. The combined
+    multi-housing panel (data/rtms_rent_panel.parquet) is assembled
+    by a separate combiner in step 3.
 
     Defaults to all 25 Seoul gus. Pass `gus=[...lawd_cd strings...]`
-    for a pilot subset.
+    for a pilot subset. Default cache dir and output path are derived
+    per-housing-type from DEFAULT_TENURE_OUTPUTS and
+    _default_cache_dir(); pass explicit `cache_dir` / `output` to
+    override."""
+    if housing_type not in HOUSING_TYPE_REGISTRY:
+        raise ValueError(
+            f"Unknown housing_type {housing_type!r}; valid options: "
+            f"{sorted(HOUSING_TYPE_REGISTRY.keys())}.")
+    spec = HOUSING_TYPE_REGISTRY[housing_type]
 
-    Output written to `output` (default data/wolse_molit.parquet,
-    gitignored). Returns the in-memory panel."""
     if service_key is None:
         service_key = os.getenv(SERVICE_KEY_ENV)
     if not service_key:
@@ -368,8 +525,12 @@ def build_seoul_tenure_panel(
             f"MOLIT service key missing — set {SERVICE_KEY_ENV} in your "
             "environment (use the decoded 일반 인증키 from data.go.kr 마이페이지).")
 
+    if cache_dir is None:
+        cache_dir = _default_cache_dir(housing_type)
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    if output is None:
+        output = DEFAULT_TENURE_OUTPUTS[housing_type]
     output = Path(output)
 
     if gus is None:
@@ -386,7 +547,8 @@ def build_seoul_tenure_panel(
         raise ValueError("`years` is empty")
 
     n_calls = len(gu_list) * len(year_list) * 12
-    print(f"MOLIT tenure panel: {len(gu_list)} gus × {len(year_list)} yrs × 12 mo "
+    print(f"MOLIT tenure panel [{housing_type}]: "
+          f"{len(gu_list)} gus × {len(year_list)} yrs × 12 mo "
           f"= {n_calls} calls (cache at {cache_dir})")
 
     transactions: list[pd.DataFrame] = []
@@ -394,24 +556,26 @@ def build_seoul_tenure_panel(
         for y in year_list:
             for m in range(1, 13):
                 ymd = f"{y}{m:02d}"
-                items, _ = _pull_month(lawd_cd, ymd, service_key, cache_dir)
+                items, _ = _pull_month(lawd_cd, ymd, service_key, cache_dir,
+                                        url=spec.url)
                 if items:
                     transactions.append(
-                        _classify_and_normalize(items, lawd_cd, y, m))
+                        _classify_and_normalize(items, lawd_cd, y, m,
+                                                spec=spec))
                 time.sleep(polite_sleep_s)
 
     if not transactions:
         raise RuntimeError(
-            "RTMSDataSvcAptRent returned zero transactions across the "
-            "requested gus × years. Check key, LAWD_CD, year coverage.")
+            f"{spec.url.rsplit('/', 1)[-1]} returned zero transactions across "
+            "the requested gus × years. Check key, LAWD_CD, year coverage.")
 
     raw = pd.concat(transactions, ignore_index=True)
     panel = _aggregate_to_gu_month(raw)
     panel["gu_name"] = panel["lawd_cd"].map(SEOUL_LAWD_CD_TO_GU)
     panel["year_month"] = (panel["year"].astype(str).str.zfill(4)
                            + panel["month"].astype(str).str.zfill(2))
-    panel["housing_type"] = "apt"
-    panel["source"] = "data_go_kr_rtms_apt"
+    panel["housing_type"] = spec.housing_type
+    panel["source"] = spec.source_tag
     panel = panel[[
         "lawd_cd", "gu_name", "year", "month", "year_month",
         "n_rent_deals", "n_wolse", "n_jeonse", "wolse_ratio",
@@ -448,25 +612,35 @@ def _cli_build_panel(args: argparse.Namespace) -> int:
     years = list(range(args.start_year, args.end_year + 1))
     gus = args.gus.split(",") if args.gus else None
     panel = build_seoul_tenure_panel(
+        args.housing_type,
         years,
-        cache_dir=Path(args.cache_dir),
-        output=Path(args.output),
+        cache_dir=Path(args.cache_dir) if args.cache_dir else None,
+        output=Path(args.output) if args.output else None,
         gus=gus,
     )
     n_gus = panel["lawd_cd"].nunique()
-    print(f"\nTenure panel (apartment-only): {len(panel)} gu-month rows  "
+    out_path = args.output or DEFAULT_TENURE_OUTPUTS[args.housing_type]
+    print(f"\nTenure panel [{args.housing_type}]: {len(panel)} gu-month rows  "
           f"({n_gus} gus × {len(years)} yrs × 12 mo)")
     print(f"  wolse_ratio range:           "
           f"[{panel['wolse_ratio'].min():.3f}, {panel['wolse_ratio'].max():.3f}]")
-    print(f"  median_deposit_per_m2 range: "
-          f"[{panel['median_deposit_per_m2'].min():.2f}, "
-          f"{panel['median_deposit_per_m2'].max():.2f}] 만원/m²")
-    print(f"  median_monthly_per_m2 range: "
-          f"[{panel['median_monthly_rent_per_m2'].min():.3f}, "
-          f"{panel['median_monthly_rent_per_m2'].max():.3f}] 만원/m²")
+    if panel["median_deposit_per_m2"].notna().any():
+        print(f"  median_deposit_per_m2 range: "
+              f"[{panel['median_deposit_per_m2'].min():.2f}, "
+              f"{panel['median_deposit_per_m2'].max():.2f}] 만원/m²")
+    else:
+        print(f"  median_deposit_per_m2:       NaN by construction "
+              f"(area_kind=total_floor; see registry)")
+    if panel["median_monthly_rent_per_m2"].notna().any():
+        print(f"  median_monthly_per_m2 range: "
+              f"[{panel['median_monthly_rent_per_m2'].min():.3f}, "
+              f"{panel['median_monthly_rent_per_m2'].max():.3f}] 만원/m²")
+    else:
+        print(f"  median_monthly_per_m2:       NaN by construction "
+              f"(area_kind=total_floor)")
     print(f"  rows with wolse_ratio NaN:   "
           f"{panel['wolse_ratio'].isna().sum()} (gu-months with zero deals)")
-    print(f"written: {args.output}")
+    print(f"written: {out_path}")
     return 0
 
 
@@ -475,20 +649,26 @@ def main(argv: list[str] | None = None) -> int:
     sys.stderr.reconfigure(encoding="utf-8")
 
     ap = argparse.ArgumentParser(
-        description="MOLIT RTMSDataSvcAptRent client — apartment-only Seoul "
-                    "tenure panel")
+        description="MOLIT RTMS rent client — per-housing-type Seoul "
+                    "tenure panel (apt / RH / SH / Offi)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_build = sub.add_parser(
         "build-panel",
         help="end-to-end: pull → classify → aggregate → write parquet")
+    p_build.add_argument("--housing-type", default="apt",
+                         choices=sorted(HOUSING_TYPE_REGISTRY.keys()),
+                         help="which RTMS rent endpoint to pull "
+                              "(default: apt)")
     p_build.add_argument("--start-year", required=True, type=int)
     p_build.add_argument("--end-year", required=True, type=int)
     p_build.add_argument("--gus", default=None,
                          help="comma-separated lawd_cd subset (default: all "
                               "25 Seoul gus)")
-    p_build.add_argument("--cache-dir", default=str(DEFAULT_TENURE_CACHE))
-    p_build.add_argument("--output", default=str(DEFAULT_TENURE_OUTPUT))
+    p_build.add_argument("--cache-dir", default=None,
+                         help="override per-housing-type default cache dir")
+    p_build.add_argument("--output", default=None,
+                         help="override per-housing-type default output path")
 
     args = ap.parse_args(argv)
     try:
