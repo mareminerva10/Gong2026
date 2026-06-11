@@ -406,27 +406,29 @@ INDEX_HTML = r"""<!doctype html>
       </label>
       <label>Metric
         <select id="metricSelect">
-          <option value="physical_yoy_angular" data-policy-aware="true">YoY angular change (Block 2)</option>
-          <option value="physical_yoy_cosine_dist" data-policy-aware="true">YoY cosine distance (Block 2)</option>
-          <option value="physical_yoy_euclid" data-policy-aware="true">YoY Euclidean change (Block 2)</option>
-          <option value="physical_embedding_norm" data-policy-aware="true">Embedding norm (Block 2)</option>
-          <option value="statnuri_unsold_mean_units" data-policy-aware="false">Pre-completion unsold mean (Block 4b, gu-year broadcast)</option>
-          <option value="statnuri_completed_unsold_mean_units" data-policy-aware="false">Post-completion unsold mean (Block 4b, gu-year broadcast)</option>
-          <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
-          <option value="tenure_wolse_ratio_all_residential" data-policy-aware="false">Wolse ratio — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_wolse_ratio_apt" data-policy-aware="false">Wolse ratio — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_wolse_ratio_rowhouse_multifamily" data-policy-aware="false">Wolse ratio — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_wolse_ratio_single_detached" data-policy-aware="false">Wolse ratio — single / multi-generation (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_wolse_ratio_officetel" data-policy-aware="false">Wolse ratio — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_n_rent_deals" data-policy-aware="false">Rent deals — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_median_deposit_per_m2_apt" data-policy-aware="false">Median deposit/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_median_deposit_per_m2_rowhouse_multifamily" data-policy-aware="false">Median deposit/m² 만원 — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_median_deposit_per_m2_officetel" data-policy-aware="false">Median deposit/m² 만원 — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="tenure_median_monthly_rent_per_m2_apt" data-policy-aware="false">Median monthly rent/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
-          <option value="landuse_built_share" data-policy-aware="false">Land-use: built share (Block 4c, gu-year broadcast)</option>
-          <option value="landuse_vegetation_share" data-policy-aware="false">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
-          <option value="landuse_infrastructure_share" data-policy-aware="false">Land-use: infrastructure share (Block 4c, gu-year broadcast)</option>
-          <option value="landuse_transport_share" data-policy-aware="false">Land-use: transport share (Block 4c, gu-year broadcast)</option>
+          <option value="physical_yoy_angular" data-policy-aware="true" data-grain="dong-year">YoY angular change (Block 2)</option>
+          <option value="physical_yoy_cosine_dist" data-policy-aware="true" data-grain="dong-year">YoY cosine distance (Block 2)</option>
+          <option value="physical_yoy_euclid" data-policy-aware="true" data-grain="dong-year">YoY Euclidean change (Block 2)</option>
+          <option value="physical_embedding_norm" data-policy-aware="true" data-grain="dong-year">Embedding norm (Block 2)</option>
+          <option value="statnuri_unsold_mean_units" data-policy-aware="false" data-grain="gu-year">Pre-completion unsold — annual mean (Block 4b, gu-year broadcast)</option>
+          <option value="statnuri_unsold_max_units" data-policy-aware="false" data-grain="gu-year">Pre-completion unsold — annual max (Block 4b, gu-year broadcast)</option>
+          <option value="statnuri_unsold_dec_units" data-policy-aware="false" data-grain="gu-year">Pre-completion unsold — December snapshot (Block 4b, gu-year broadcast)</option>
+          <option value="statnuri_completed_unsold_mean_units" data-policy-aware="false" data-grain="gu-year">Post-completion unsold — annual mean (Block 4b, gu-year broadcast)</option>
+          <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false" data-grain="national-year">Redevelopment zones (Block 4a, national-year)</option>
+          <option value="tenure_wolse_ratio_all_residential" data-policy-aware="false" data-grain="gu-year">Wolse ratio — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_apt" data-policy-aware="false" data-grain="gu-year">Wolse ratio — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_rowhouse_multifamily" data-policy-aware="false" data-grain="gu-year">Wolse ratio — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_single_detached" data-policy-aware="false" data-grain="gu-year">Wolse ratio — single / multi-generation (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_officetel" data-policy-aware="false" data-grain="gu-year">Wolse ratio — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_n_rent_deals" data-policy-aware="false" data-grain="gu-year">Rent deals — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_apt" data-policy-aware="false" data-grain="gu-year">Median deposit/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_rowhouse_multifamily" data-policy-aware="false" data-grain="gu-year">Median deposit/m² 만원 — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_officetel" data-policy-aware="false" data-grain="gu-year">Median deposit/m² 만원 — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_monthly_rent_per_m2_apt" data-policy-aware="false" data-grain="gu-year">Median monthly rent/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="landuse_built_share" data-policy-aware="false" data-grain="gu-year">Land-use: built share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_vegetation_share" data-policy-aware="false" data-grain="gu-year">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_infrastructure_share" data-policy-aware="false" data-grain="gu-year">Land-use: infrastructure share (Block 4c, gu-year broadcast)</option>
+          <option value="landuse_transport_share" data-policy-aware="false" data-grain="gu-year">Land-use: transport share (Block 4c, gu-year broadcast)</option>
         </select>
       </label>
       <label>Artifact policy
@@ -442,6 +444,14 @@ INDEX_HTML = r"""<!doctype html>
           <button data-gu="11440">마포구</button>
           <button data-gu="11680">강남구</button>
         </div>
+      </label>
+      <label id="collapseGuLabel" style="display:none">Table view
+        <span class="segmented">
+          <label style="display:inline-flex;align-items:center;gap:4px;font-weight:normal">
+            <input type="checkbox" id="collapseGuToggle">
+            Collapse gu-broadcast metric to one row per gu
+          </label>
+        </span>
       </label>
     </section>
 
@@ -492,7 +502,7 @@ INDEX_HTML = r"""<!doctype html>
       <table class="table">
         <thead>
           <tr>
-            <th>Dong</th><th>Gu</th><th>Metric value</th><th>Gu rank (legacy)</th><th>Unsold mean</th><th>Artifact</th>
+            <th id="thDong">Dong</th><th>Gu</th><th id="thMetric">Metric value</th><th>Gu rank (legacy)</th><th>Unsold mean</th><th>Artifact</th>
           </tr>
         </thead>
         <tbody id="rowTable"></tbody>
@@ -523,6 +533,27 @@ const POLICY_BODIES = {
 function metricIsPolicyAware(metric) {
   const opt = [...metricSelect.options].find(o => o.value === metric);
   return opt ? opt.dataset.policyAware === "true" : false;
+}
+
+// Grain of the active metric: 'dong-year', 'gu-year', or
+// 'national-year'. Drives the (gu broadcast) header suffix and the
+// collapse-toggle visibility. The data-grain attribute is asserted
+// for every option by tests/test_dashboard_broadcast_clarity.py so
+// a future option added without a grain will fail loudly.
+function metricGrain(metric) {
+  const opt = [...metricSelect.options].find(o => o.value === metric);
+  return opt && opt.dataset.grain ? opt.dataset.grain : "dong-year";
+}
+
+function metricIsBroadcast(metric) {
+  return metricGrain(metric) !== "dong-year";
+}
+
+function metricBroadcastLabel(metric) {
+  const g = metricGrain(metric);
+  if (g === "gu-year") return "gu broadcast";
+  if (g === "national-year") return "national broadcast";
+  return "";
 }
 
 function metricCol() {
@@ -562,9 +593,14 @@ function initControls() {
   metricSelect.onchange = () => {
     state.metric = metricSelect.value;
     policySelect.disabled = !metricIsPolicyAware(state.metric);
+    updateCollapseToggleVisibility();
     render();
   };
   policySelect.onchange = () => { state.policy = policySelect.value; render(); };
+  if (collapseGuToggle) {
+    collapseGuToggle.onchange = () => render();
+  }
+  updateCollapseToggleVisibility();
   if (summary.default_policy) {
     state.policy = summary.default_policy;
     policySelect.value = summary.default_policy;
@@ -816,12 +852,51 @@ function renderDetail() {
 
 function renderTable(current) {
   const col = metricCol();
-  const sorted = [...current].sort((a,b) => (clean(b[col])||-1) - (clean(a[col])||-1));
+  const broadcast = metricIsBroadcast(state.metric);
+  const collapse = broadcast && collapseGuToggle && collapseGuToggle.checked;
+
+  // Update the metric column header to surface the grain. The fix
+  // for the 'why is the metric 0 or 64 for every dong?' confusion —
+  // a gu-broadcast metric is structurally identical across all dongs
+  // in a gu, so the table header now says so.
+  if (thMetric) {
+    const suffix = metricBroadcastLabel(state.metric);
+    thMetric.textContent = suffix ? `Metric value (${suffix})` : "Metric value";
+  }
+  if (thDong) thDong.textContent = collapse ? "Gu (collapsed)" : "Dong";
+
+  // Build the row set. When collapse is on AND the metric is gu-grain
+  // broadcast, fold all dongs in a (gu, year) cell into a single row
+  // labeled with the dong count; the underlying metric value is
+  // identical for all of them by construction.
+  let displayRows;
+  if (collapse) {
+    const byGu = new Map();
+    for (const r of current) {
+      if (!byGu.has(r.lawd_cd)) byGu.set(r.lawd_cd, { sample: r, count: 0 });
+      byGu.get(r.lawd_cd).count += 1;
+    }
+    displayRows = [...byGu.values()].map(({ sample, count }) => ({
+      ...sample,
+      dong_name_kr: `(${count} dongs)`,
+      physical_2022_artifact_flag: false,  // dong-level flag; not meaningful in collapse
+      physical_yoy_angular_gu_rank_desc: null,
+    }));
+  } else {
+    displayRows = current;
+  }
+
+  const sorted = [...displayRows].sort((a,b) => (clean(b[col])||-1) - (clean(a[col])||-1));
   rowTable.innerHTML = sorted.map(r => `<tr>
     <td>${r.dong_name_kr}</td><td>${r.gu_name}</td><td>${fmt(r[col])}</td>
     <td>${fmt(r.physical_yoy_angular_gu_rank_desc, 0)}</td><td>${fmt(r.statnuri_unsold_mean_units, 0)}</td>
     <td>${r.physical_2022_artifact_flag ? '<span class="badge artifact">2022 flag</span>' : ''}</td>
   </tr>`).join("");
+}
+
+function updateCollapseToggleVisibility() {
+  if (!collapseGuLabel) return;
+  collapseGuLabel.style.display = metricIsBroadcast(state.metric) ? "" : "none";
 }
 
 function render() {
