@@ -27,7 +27,7 @@ The product surface that is built, tested, and audit-trail-recorded:
 
 The product surface that is explicitly NOT in scope until the named input changes:
 
-- **Block 3 (vulnerability)** — unscoped. No source identified. Unblocks on: source identification (KOSIS demographics / household income / age structure or equivalent) followed by a status doc analogous to `docs/tenure_source_status.md`.
+- **Block 3 (vulnerability) — scoped 2026-06-11, not yet integrated.** v1 plan locked in `docs/vulnerability_source_status.md`: four descriptive indicators at gu-year broadcast — `senior_population_share`, `single_person_household_share`, `foreign_resident_share`, `basic_livelihood_recipient_share`. Sources: KOSIS / Seoul Open Data / 행정안전부 — public, no MOLIT approval required. Unblocks on: free KOSIS or SGIS OpenAPI key + portal-side (stat_id, table_id) discovery for the four indicators. Each indicator is exposed as its own column; no composite, no score, no classification.
 - **Block 4c (spatial development companion) — resolved at gu-year grain on 2026-06-08.** StatNuri 2300/2 (행정구역별·지목별 국토이용현황_시군구) is live as a **gu-level land-use context layer**, broadcast to dong rows via `lawd_cd × year`. It is **not** a dong-grain designation overlay; the dong-grain Track 1 (의제처리구역 SHP, KOGL-4) and Track 2 (Seoul aggregate tables 235 / 10804 / 145, empty file slots) remain parked. 건축HUB OpenAPI also remains parked as post-MVP. See `docs/molit_probe_2026-06-07.md` for the probe verdict and `docs/development_spatial_companion_status.md` for the parked dong-grain tracks. The dong-grain overlay still unblocks on: KOGL-1 license clarification or a non-file access path for the Seoul aggregate tables.
 
 ## Forbidden until inputs change
