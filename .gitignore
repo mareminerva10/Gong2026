@@ -6,6 +6,11 @@ gong2026-*.json
 **/credentials*.json
 *.env
 
+# Firebase Hosting config (Spark static-export deploy) — these are
+# config, not credentials; firebase deploy tokens live in CI secrets.
+!firebase.json
+!.firebaserc
+
 # Python
 __pycache__/
 *.py[cod]
@@ -27,6 +32,10 @@ data/molit_cache/
 
 # Generated plots
 outputs/
+
+# Static export output for Firebase Hosting — regenerated each deploy
+# by `python export_static_dashboard.py`; not a source artifact.
+public/
 
 # Local dashboard process marker
 .dashboard_server.pid
