@@ -37,6 +37,12 @@ DEFAULT_COMPLETED_UNSOLD = DATA / "statnuri_completed_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
 DEFAULT_LANDUSE = DATA / "statnuri_landuse_panel.parquet"
 DEFAULT_TENURE = DATA / "rtms_rent_panel.parquet"
+# Future Block 3 vulnerability panel path. NOT wired into main()
+# yet — the integration is gated on `docs/vulnerability_table_ledger.md`
+# closing (KOSIS/SGIS key + per-indicator stat_id pinning). Defined
+# now so `merge_optional_vulnerability` and its test suite can use a
+# canonical default; consumed for real once the panel exists.
+DEFAULT_VULNERABILITY = DATA / "seoul_vulnerability_panel.parquet"
 DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
 DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
 
@@ -370,6 +376,131 @@ def merge_optional_tenure(df: pd.DataFrame, path: Path) -> pd.DataFrame:
         "live",
         "missing_join_row",
     )
+    return out
+
+
+VULNERABILITY_INDICATORS = (
+    "senior_population",
+    "single_person_household",
+    "foreign_resident",
+    "basic_livelihood_recipient_household",
+)
+
+# Numerator and denominator column pairs per v1 indicator. The merge
+# function reads numerator+denominator from the panel and computes the
+# share itself — never adopts a source-shipped `*_share` column. This
+# is the recompute-from-counts rule per
+# docs/vulnerability_table_ledger.md.
+VULNERABILITY_DENOMINATORS = {
+    "senior_population":                    "total_population_count",
+    "single_person_household":              "total_household_count",
+    "foreign_resident":                     "foreign_resident_denominator_count",
+    "basic_livelihood_recipient_household": "total_household_count",
+}
+
+
+def merge_optional_vulnerability(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Merge the gu-year Block 3 vulnerability panel onto dong-year
+    contract rows. **NOT yet wired into main()** — this is the
+    pre-integration contract function for the four v1 indicators
+    (`senior_population_share`, `single_person_household_share`,
+    `foreign_resident_share`, `basic_livelihood_recipient_share`),
+    scoped in `docs/vulnerability_source_status.md` and locked at the
+    per-indicator level in `docs/vulnerability_table_ledger.md`.
+
+    Source panel schema (gu × year grain — one row per
+    (lawd_cd, year)):
+
+      lawd_cd, gu_name, year
+      senior_population_count, total_population_count
+      single_person_household_count, total_household_count
+      foreign_resident_count, foreign_resident_denominator_count
+      basic_livelihood_recipient_household_count
+
+    `total_household_count` is shared by single_person_household and
+    basic_livelihood_recipient_household — both use the same denominator
+    in the v1 ledger default; do NOT carry two columns unless the
+    sources diverge in a future v2 (per the ledger note).
+
+    Contract output (added to df, prefixed with `vulnerability_` so it
+    cannot collide with any other block):
+
+      vulnerability_{indicator}_count
+      vulnerability_{indicator_denominator}    (e.g. vulnerability_total_population_count)
+      vulnerability_{indicator}_share          (recomputed from counts)
+      vulnerability_status flipped to "live" on join hit
+
+    `vulnerability_*_share` is ALWAYS recomputed inside this function
+    from the numerator/denominator counts. A source-shipped
+    `*_share` column on the panel is explicitly NOT consumed and is
+    rejected at validate-time. This protects against a denominator
+    drift across years in the source not being visible in the share
+    column (per
+    [[project-block1-multi-housing-tenure-live-2026-06-11]] — same
+    rule used for `tenure_wolse_ratio`)."""
+    if not path.exists():
+        return df
+
+    panel = pd.read_parquet(path).copy()
+    required = {"lawd_cd", "year"}
+    for ind in VULNERABILITY_INDICATORS:
+        required.add(f"{ind}_count")
+        required.add(VULNERABILITY_DENOMINATORS[ind])
+    missing = required - set(panel.columns)
+    if missing:
+        raise ValueError(
+            f"vulnerability panel missing required columns: "
+            f"{sorted(missing)}. See docs/vulnerability_table_ledger.md "
+            "for the v1 schema.")
+
+    # Reject source-shipped `*_share` columns. Shares must be
+    # recomputed from counts within this function so the denominator
+    # convention is honored at integration time, not adopted blindly
+    # from a source whose denominator may shift across years.
+    shipped_shares = [c for c in panel.columns
+                      if c.endswith("_share")]
+    if shipped_shares:
+        raise ValueError(
+            f"vulnerability panel includes source-shipped share "
+            f"column(s): {shipped_shares}. Shares are recomputed in "
+            "merge_optional_vulnerability from numerator/denominator "
+            "counts; remove these columns from the panel.")
+
+    panel["lawd_cd"] = panel["lawd_cd"].astype(str)
+    panel["year"] = panel["year"].astype(int)
+
+    # Compute the four shares from the count columns. Mirrors the
+    # tenure_wolse_ratio rule: ratios from annual counts, not averaged
+    # or source-adopted.
+    for ind in VULNERABILITY_INDICATORS:
+        num = panel[f"{ind}_count"]
+        den = panel[VULNERABILITY_DENOMINATORS[ind]]
+        panel[f"{ind}_share"] = num.where(den > 0).div(den.where(den > 0))
+
+    # Prefix every data column with `vulnerability_` before merging
+    # onto the contract so the namespace cannot collide with any
+    # other block. lawd_cd / year / gu_name stay un-prefixed (they
+    # are join / identity columns).
+    data_cols = [c for c in panel.columns
+                 if c not in {"lawd_cd", "year", "gu_name"}]
+    rename_map = {c: f"vulnerability_{c}" for c in data_cols}
+    panel = panel.rename(columns=rename_map)
+
+    merge_cols = ["lawd_cd", "year", *(f"vulnerability_{c}" for c in data_cols)]
+    out = df.merge(panel[merge_cols], on=["lawd_cd", "year"], how="left")
+
+    # Status flip: vulnerability_status -> "live" wherever the join
+    # produced non-null data. Per the established Block-1 / Block-4
+    # pattern (see `merge_optional_tenure`,
+    # `merge_optional_completed_unsold`); the field is initialized in
+    # add_status_columns and only flipped here.
+    indicator_share_cols = [
+        f"vulnerability_{ind}_share" for ind in VULNERABILITY_INDICATORS]
+    if "vulnerability_status" in out.columns:
+        out["vulnerability_status"] = np.where(
+            out[indicator_share_cols].notna().any(axis=1),
+            "live",
+            out["vulnerability_status"])
     return out
 
 
