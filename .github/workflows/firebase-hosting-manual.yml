@@ -10,9 +10,9 @@ name: Firebase Hosting (manual)
 # This workflow ships exactly when a human clicks the "Run workflow"
 # button on the Actions tab, and not before.
 #
-# Required GitHub secret (set in repo Settings → Secrets and variables → Actions):
+# Required GitHub secret (set in repo Settings > Secrets and variables > Actions):
 #
-#   FIREBASE_TOKEN  — output of `firebase login:ci` on the developer's
+#   FIREBASE_TOKEN  - output of `firebase login:ci` on the developer's
 #                     local machine. Pinned to the `gentrifine` Firebase
 #                     project by .firebaserc.
 
@@ -41,7 +41,7 @@ jobs:
 
       - name: Run guard suite (must pass before deploy)
         # The same 78-test suite the local developer runs. This is the
-        # last gate before a public artifact is published — claim
+        # last gate before a public artifact is published - claim
         # vocabulary, embedding leakage, payload size ceiling,
         # snapshot purity, positive scope disclosure, and the fetch
         # URL rewrite are all enforced here.
@@ -86,14 +86,15 @@ jobs:
       - name: Install firebase-tools
         run: npm install --quiet --global firebase-tools
 
-      - name: Deploy to Firebase Hosting (project: gentrifine)
+      - name: "Deploy to Firebase Hosting (project: gentrifine)"
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           if [ -z "$FIREBASE_TOKEN" ]; then
-            echo "::error::FIREBASE_TOKEN secret is not set. Add it via Settings → Secrets → Actions; generate with 'firebase login:ci'."
+            echo "::error::FIREBASE_TOKEN secret is not set. Add it via Settings > Secrets and variables > Actions; generate with firebase login:ci."
             exit 1
           fi
+
           firebase deploy \
             --only hosting \
             --project gentrifine \
