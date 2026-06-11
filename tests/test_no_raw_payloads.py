@@ -23,9 +23,17 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The only file under data/ that the project legitimately tracks.
+# The only files under data/ that the project legitimately tracks.
+# The two `data/snapshot/*.parquet` entries are the curated public-deploy
+# snapshot consumed by the workflow_dispatch Firebase deploy
+# (.github/workflows/firebase-hosting-manual.yml); see
+# project-next-session-step6-snapshot-deploy-2026-06-11. Any other
+# parquet under data/snapshot/ would fail this test even if .gitignore
+# slipped — the snapshot directory must not become a raw-data lake.
 ALLOWED_DATA_FILES = frozenset({
     "data/labeled_cases.csv",
+    "data/snapshot/dashboard_pilot_contract.parquet",
+    "data/snapshot/pilot_legal_dong_manifest.parquet",
 })
 
 
@@ -60,8 +68,10 @@ def test_no_data_payloads_tracked() -> None:
 
 
 def test_no_parquet_files_tracked() -> None:
-    """Belt-and-braces: no .parquet anywhere in the repo, in case a
-    cache directory moves outside data/ in the future."""
+    """Belt-and-braces: no .parquet anywhere in the repo *except* the
+    curated public-deploy snapshot under data/snapshot/. This catches
+    cache directories that move outside data/ in the future, plus
+    any new parquet path that bypasses the data/ rules."""
     result = subprocess.run(
         ["git", "ls-files", "*.parquet"],
         cwd=REPO_ROOT,
@@ -70,9 +80,12 @@ def test_no_parquet_files_tracked() -> None:
         check=False,
     )
     tracked = [p for p in result.stdout.strip().split("\n") if p]
-    assert not tracked, (
-        f"unexpected .parquet file(s) tracked: {tracked}. Derived panels "
-        "must be regenerated from source, not committed."
+    illegal = [p for p in tracked if p not in ALLOWED_DATA_FILES]
+    assert not illegal, (
+        f"unexpected .parquet file(s) tracked: {illegal}. Derived "
+        "panels must be regenerated from source, not committed. The "
+        f"only parquets the repo legitimately tracks are: "
+        f"{sorted(p for p in ALLOWED_DATA_FILES if p.endswith('.parquet'))}."
     )
 
 

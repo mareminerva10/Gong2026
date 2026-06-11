@@ -42,6 +42,18 @@ import dashboard_app as da
 
 DEFAULT_OUTPUT_DIR = Path("public")
 
+# Curated public-deploy snapshot paths. The workflow_dispatch Firebase
+# deploy reads from these so the public site is reproducible from any
+# git commit SHA — independent of whatever data the developer's local
+# machine has built. The snapshot is refreshed by copying the live
+# data/dashboard_pilot_contract.parquet and data/pilot_legal_dong_manifest.parquet
+# into data/snapshot/ as a deliberate commit. See
+# project-next-session-step6-snapshot-deploy-2026-06-11 for the
+# decision rationale (chosen over Git-LFS, in-CI data re-pull, and
+# uploaded-artifact alternatives).
+DEFAULT_SNAPSHOT_CONTRACT = Path("data/snapshot/dashboard_pilot_contract.parquet")
+DEFAULT_SNAPSHOT_MANIFEST = Path("data/snapshot/pilot_legal_dong_manifest.parquet")
+
 # 2 MiB ceiling on the uncompressed payload. At this size, after Firebase
 # Hosting's gzip, the per-first-load egress is well under 1 MB, giving
 # >360 first-loads/day on the Spark plan's 360 MB/day allowance.
@@ -188,20 +200,27 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(
         description="Build a static export of the Gong2026 dashboard for "
-                    "Firebase Hosting (Spark plan, no Cloud Run).")
+                    "Firebase Hosting (Spark plan, no Cloud Run). "
+                    "Defaults read from the live local artifacts "
+                    "(data/*.parquet) so the existing local export flow "
+                    "is unchanged; the CI/CD deploy workflow passes "
+                    "--contract data/snapshot/... explicitly so it is "
+                    "reproducible from the committed snapshot.")
     ap.add_argument("--contract", default=str(da.DEFAULT_CONTRACT),
                     help="dashboard contract parquet "
                          "(default: data/dashboard_pilot_contract.parquet)")
     ap.add_argument("--manifest", default=str(da.DEFAULT_MANIFEST),
                     help="legal-dong polygon manifest parquet "
                          "(default: data/pilot_legal_dong_manifest.parquet)")
-    ap.add_argument("--output", default=str(DEFAULT_OUTPUT_DIR),
-                    help="static-export output directory (default: public/)")
+    ap.add_argument("--out-dir", "--output", dest="out_dir",
+                    default=str(DEFAULT_OUTPUT_DIR),
+                    help="static-export output directory (default: public/). "
+                         "`--output` accepted as a backward-compat alias.")
     args = ap.parse_args(argv)
 
     try:
         result = export(Path(args.contract), Path(args.manifest),
-                        Path(args.output))
+                        Path(args.out_dir))
     except (FileNotFoundError, RuntimeError) as e:
         print(f"\nERROR: {e}", file=sys.stderr)
         return 1

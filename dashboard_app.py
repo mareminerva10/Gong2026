@@ -381,7 +381,7 @@ INDEX_HTML = r"""<!doctype html>
   <aside class="stack">
     <div class="stack">
       <h1>Seoul built-environment change tracker</h1>
-      <p class="subtle">Gong2026 pilot · 마포구 + 강남구 legal-dong panel, 2017–2024</p>
+      <p class="subtle" id="pilotScope">Gong2026 40-dong pilot · 마포구 + 강남구 legal-dong panel, 2017–2024</p>
     </div>
     <section class="panel stack">
       <h2>Evidence Blocks</h2>

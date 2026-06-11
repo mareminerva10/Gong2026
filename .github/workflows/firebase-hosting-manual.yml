@@ -1,0 +1,101 @@
+name: Firebase Hosting (manual)
+
+# Manual-trigger only. There is intentionally NO push trigger.
+#
+# Rationale (per project-next-session-step6-snapshot-deploy-2026-06-11):
+# the dashboard is a public-facing pilot with sensitive framing
+# (the 2026 reframe banned forecast / risk / score vocabulary; the
+# title/H1 claim guard catches regressions). A push-to-master
+# auto-deploy could ship an accidental overclaim before review.
+# This workflow ships exactly when a human clicks the "Run workflow"
+# button on the Actions tab, and not before.
+#
+# Required GitHub secret (set in repo Settings → Secrets and variables → Actions):
+#
+#   FIREBASE_TOKEN  — output of `firebase login:ci` on the developer's
+#                     local machine. Pinned to the `gentrifine` Firebase
+#                     project by .firebaserc.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build snapshot export + Firebase deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        # geopandas is needed because load_polygons reads the legal-dong
+        # manifest at export time. pyarrow is needed to read the
+        # snapshot parquets.
+        run: |
+          pip install --quiet pandas pyarrow numpy geopandas requests pytest
+
+      - name: Run guard suite (must pass before deploy)
+        # The same 78-test suite the local developer runs. This is the
+        # last gate before a public artifact is published — claim
+        # vocabulary, embedding leakage, payload size ceiling,
+        # snapshot purity, positive scope disclosure, and the fetch
+        # URL rewrite are all enforced here.
+        run: pytest tests/ -v
+
+      - name: Build static export from the committed snapshot
+        # Explicit snapshot paths so the build is reproducible from
+        # this commit SHA. Local developers can still run the export
+        # against live data/*.parquet on their own machines; the CI
+        # deploy is locked to the committed snapshot artifacts.
+        run: |
+          python export_static_dashboard.py \
+            --contract data/snapshot/dashboard_pilot_contract.parquet \
+            --manifest data/snapshot/pilot_legal_dong_manifest.parquet \
+            --out-dir public
+
+      - name: Inspect built payload (audit log)
+        # Records the deployed payload's size and basic shape in the
+        # workflow log so we can verify after-the-fact what shipped.
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          payload = json.loads(pathlib.Path("public/payload.json").read_text(encoding="utf-8"))
+          size = pathlib.Path("public/payload.json").stat().st_size
+          print(f"payload.json size: {size:,} bytes ({size/1024/1024:.2f} MiB)")
+          print(f"row count:         {len(payload['rows'])}")
+          print(f"summary.years:     {payload['summary']['years']}")
+          print(f"tenure_status:     {payload['summary']['statuses'].get('tenure_status', [])}")
+          print(f"physical_status:   {payload['summary']['statuses'].get('physical_status', [])}")
+          # Sanity: no embedding bands in the deployed payload.
+          first_row_keys = list(payload['rows'][0].keys()) if payload['rows'] else []
+          has_bands = any(k.startswith('A') and len(k) == 3 and k[1:].isdigit()
+                          for k in first_row_keys)
+          assert not has_bands, "embedding bands leaked into deployed payload!"
+          PY
+
+      - name: Setup Node.js (for firebase-tools)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install firebase-tools
+        run: npm install --quiet --global firebase-tools
+
+      - name: Deploy to Firebase Hosting (project: gentrifine)
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "::error::FIREBASE_TOKEN secret is not set. Add it via Settings → Secrets → Actions; generate with 'firebase login:ci'."
+            exit 1
+          fi
+          firebase deploy \
+            --only hosting \
+            --project gentrifine \
+            --token "$FIREBASE_TOKEN" \
+            --non-interactive

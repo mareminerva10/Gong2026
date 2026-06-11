@@ -30,6 +30,15 @@ data/**/*.parquet
 data/*_raw*
 data/molit_cache/
 
+# Curated public-deploy snapshot. Only these two specific files are
+# whitelisted — every other parquet/file under data/snapshot/ stays
+# ignored, so a cache directory or large panel can't sneak into the
+# snapshot namespace. tests/test_no_raw_payloads.py asserts the same
+# rule at the git-index level.
+!data/snapshot/
+!data/snapshot/dashboard_pilot_contract.parquet
+!data/snapshot/pilot_legal_dong_manifest.parquet
+
 # Generated plots
 outputs/
 
