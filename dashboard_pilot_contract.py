@@ -36,7 +36,7 @@ DEFAULT_UNSOLD = DATA / "statnuri_unsold_panel.parquet"
 DEFAULT_COMPLETED_UNSOLD = DATA / "statnuri_completed_unsold_panel.parquet"
 DEFAULT_REDEV = DATA / "national_redevelopment_intensity.parquet"
 DEFAULT_LANDUSE = DATA / "statnuri_landuse_panel.parquet"
-DEFAULT_TENURE = DATA / "wolse_molit.parquet"
+DEFAULT_TENURE = DATA / "rtms_rent_panel.parquet"
 DEFAULT_RESIDUALIZED = DATA / "seoul_pilot_physical_residualized.parquet"
 DEFAULT_OUTPUT = DATA / "dashboard_pilot_contract.parquet"
 
@@ -140,17 +140,18 @@ def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
     # the UI flag_2022 signal.
     out["physical_artifact_policy"] = "metric_year_fe"
 
-    # Block 1 (tenure pressure). Source resolved 2026-06-09 via
-    # RTMSDataSvcAptRent (apartment-only). When the local panel is
-    # present, merge_optional_tenure flips tenure_status from
-    # "missing_local_artifact" to "live_partial" — partial because the
-    # scope is apartment-only and single/multi-family + officetel rent
-    # remain on sibling endpoints not yet integrated. Per the user spec,
-    # tenure_scope='apartment_only' is carried explicitly so downstream
-    # consumers cannot conflate this with all-tenure context.
-    out["tenure_source"] = "data_go_kr_rtms_apt"
+    # Block 1 (tenure pressure). Full four-housing-type coverage
+    # integrated 2026-06-10 via RTMS sibling endpoints (apt + RH + SH +
+    # Offi). When the local combined panel is present,
+    # merge_optional_tenure flips tenure_status from
+    # "missing_local_artifact" to "live". Scope is recorded explicitly
+    # so a future consumer cannot conflate the four-type coverage with
+    # the earlier apartment-only state, and so a regression that
+    # narrows the panel to one housing type would be visible in the
+    # scope string.
+    out["tenure_source"] = "data_go_kr_rtms_multi_housing"
     out["tenure_grain"] = "gu-year"
-    out["tenure_scope"] = "apartment_only"
+    out["tenure_scope"] = "apt + rowhouse_multifamily + single_detached + officetel"
     out["tenure_status"] = "missing_local_artifact"
 
     out["vulnerability_source"] = "not_scoped"
@@ -235,68 +236,138 @@ def merge_optional_residualized(df: pd.DataFrame, path: Path) -> pd.DataFrame:
     return df.merge(res[keep], on=["emd_cd", "year"], how="left")
 
 
+TENURE_HOUSING_TYPES = (
+    "apt",
+    "rowhouse_multifamily",
+    "single_detached",
+    "officetel",
+)
+# Housing types whose per-m² medians are MEANINGFUL. Single-detached
+# is excluded because SHRent only exposes totalFloorAr (whole-building
+# gross), which is not comparable to per-unit excluUseAr from the
+# other three types. See molit_client.HOUSING_TYPE_REGISTRY and
+# docs/rtms_siblings_probe_2026-06-09.md.
+TENURE_PER_M2_TYPES = ("apt", "rowhouse_multifamily", "officetel")
+
+
 def merge_optional_tenure(df: pd.DataFrame, path: Path) -> pd.DataFrame:
-    """Merge the apartment-only Seoul tenure panel (Block 1) if its
-    parquet is present.
+    """Merge the combined multi-housing RTMS rent panel (Block 1) if
+    its parquet is present.
 
-    The panel is gu × month; this merge annualizes it on the fly into
-    gu × year, then broadcasts onto dong-year rows via lawd_cd × year
-    (gu-level broadcast — the underlying source is gu-grain, not
-    dong-grain). When the merge succeeds, tenure_status flips from
-    'missing_local_artifact' to 'live_partial': partial because the
-    scope is apartment-only (RTMSDataSvcAptRent). Single / multi-family
-    and officetel rent flow through sibling endpoints not yet
-    integrated; do not relabel 'live_partial' as 'live' until those
-    paths land.
+    The panel is (gu × month × housing_type) with the four sibling
+    endpoints concatenated under a `housing_type` column. This merge
+    annualizes on the fly into (gu × year × housing_type), then
+    broadcasts onto dong-year rows via lawd_cd × year (gu-level
+    broadcast — the underlying source is gu-grain, not dong-grain).
 
-    Exposed columns are the six core tenure metrics, prefixed with
-    `tenure_` so they don't collide with the housing-stress block in
-    the contract surface:
+    When the merge succeeds, tenure_status flips from
+    `missing_local_artifact` to `live` (no `live_partial` step
+    anymore — the four-housing-type coverage is the full scope per
+    project-next-session-multi-housing-tenure-2026-06-09).
 
-      tenure_n_rent_deals       (annual sum)
-      tenure_n_wolse             (annual sum)
-      tenure_n_jeonse            (annual sum)
-      tenure_wolse_ratio         (recomputed from annual sums, NOT
-                                  averaged from the monthly ratios)
-      tenure_median_deposit_per_m2       (median of monthly medians)
-      tenure_median_monthly_rent_per_m2  (median of monthly medians,
-                                          wolse-only sub-population)"""
+    Exposed columns:
+
+      All-residential counts (sums across all four housing types):
+        tenure_n_rent_deals
+        tenure_n_wolse
+        tenure_n_jeonse
+
+      wolse_ratio rollups (recomputed from annual sums per housing
+      type, NOT averaged from monthly ratios — required rule):
+        tenure_wolse_ratio_all_residential   = sum(n_wolse) /
+                                               sum(n_rent_deals)
+                                               across all four types
+        tenure_wolse_ratio_apt
+        tenure_wolse_ratio_rowhouse_multifamily
+        tenure_wolse_ratio_single_detached
+        tenure_wolse_ratio_officetel
+
+      Per-type per-m² medians (apt / RH / Offi only — SH excluded
+      because of the totalFloorAr vs excluUseAr semantic gap; SH
+      rows in the source panel carry NaN per-m² by construction):
+        tenure_median_deposit_per_m2_apt
+        tenure_median_deposit_per_m2_rowhouse_multifamily
+        tenure_median_deposit_per_m2_officetel
+        tenure_median_monthly_rent_per_m2_apt
+        tenure_median_monthly_rent_per_m2_rowhouse_multifamily
+        tenure_median_monthly_rent_per_m2_officetel"""
     if not path.exists():
         return df
     monthly = pd.read_parquet(path).copy()
-    required = {"lawd_cd", "year", "month", "n_rent_deals", "n_wolse",
-                "wolse_ratio", "median_deposit_per_m2",
-                "median_monthly_rent_per_m2"}
+    required = {"lawd_cd", "year", "month", "housing_type",
+                "n_rent_deals", "n_wolse",
+                "median_deposit_per_m2", "median_monthly_rent_per_m2"}
     missing = required - set(monthly.columns)
     if missing:
         raise ValueError(
-            f"tenure panel missing required columns: {sorted(missing)}")
+            f"tenure panel missing required columns: {sorted(missing)}. "
+            "After step 4, the tenure source is the combined "
+            "data/rtms_rent_panel.parquet (multi-housing) — not the "
+            "legacy apartment-only data/wolse_molit.parquet.")
+    bad_types = (set(monthly["housing_type"].unique())
+                 - set(TENURE_HOUSING_TYPES))
+    if bad_types:
+        raise ValueError(
+            f"tenure panel has unexpected housing_type value(s): "
+            f"{sorted(bad_types)}. Expected: {list(TENURE_HOUSING_TYPES)}.")
     monthly["lawd_cd"] = monthly["lawd_cd"].astype(str)
     monthly["year"] = monthly["year"].astype(int)
 
-    # Inline annual rollup so the contract layer doesn't import
-    # molit_client (keeps contract code import-light).
-    by = monthly.groupby(["lawd_cd", "year"])
+    # Annual sums per (gu, year, housing_type). These are the
+    # statistically correct inputs to the wolse_ratio rollups — the
+    # required rule is that annual ratios are recomputed from annual
+    # sums, never averaged from monthly ratios.
+    by_typed = monthly.groupby(["lawd_cd", "year", "housing_type"])
+    typed_annual = pd.DataFrame({
+        "n_rent_deals": by_typed["n_rent_deals"].sum().astype("int64"),
+        "n_wolse": by_typed["n_wolse"].sum().astype("int64"),
+        "median_deposit_per_m2": by_typed["median_deposit_per_m2"].median(),
+        "median_monthly_rent_per_m2": by_typed["median_monthly_rent_per_m2"].median(),
+    }).reset_index()
+
+    # All-residential counts: sum across the four housing types.
+    by_gu_yr = typed_annual.groupby(["lawd_cd", "year"])
     annual = pd.DataFrame({
-        "tenure_n_rent_deals": by["n_rent_deals"].sum().astype("int64"),
-        "tenure_n_wolse": by["n_wolse"].sum().astype("int64"),
-        "tenure_median_deposit_per_m2": by["median_deposit_per_m2"].median(),
-        "tenure_median_monthly_rent_per_m2": by["median_monthly_rent_per_m2"].median(),
+        "tenure_n_rent_deals": by_gu_yr["n_rent_deals"].sum().astype("int64"),
+        "tenure_n_wolse": by_gu_yr["n_wolse"].sum().astype("int64"),
     }).reset_index()
     annual["tenure_n_jeonse"] = (annual["tenure_n_rent_deals"]
                                   - annual["tenure_n_wolse"])
-    annual["tenure_wolse_ratio"] = (annual["tenure_n_wolse"]
-                                     / annual["tenure_n_rent_deals"])
+    annual["tenure_wolse_ratio_all_residential"] = (
+        annual["tenure_n_wolse"] / annual["tenure_n_rent_deals"])
+
+    # Per-type wolse_ratio rollups (recomputed from annual sums).
+    for ht in TENURE_HOUSING_TYPES:
+        sub = typed_annual[typed_annual["housing_type"] == ht][
+            ["lawd_cd", "year", "n_rent_deals", "n_wolse"]
+        ].copy()
+        sub[f"tenure_wolse_ratio_{ht}"] = (
+            sub["n_wolse"] / sub["n_rent_deals"])
+        annual = annual.merge(
+            sub[["lawd_cd", "year", f"tenure_wolse_ratio_{ht}"]],
+            on=["lawd_cd", "year"], how="left")
+
+    # Per-type per-m² medians (apt / RH / Offi only). For SH the
+    # source rows carry NaN by construction and the column is
+    # deliberately not exposed at the contract surface.
+    for ht in TENURE_PER_M2_TYPES:
+        sub = typed_annual[typed_annual["housing_type"] == ht][
+            ["lawd_cd", "year", "median_deposit_per_m2",
+             "median_monthly_rent_per_m2"]
+        ].rename(columns={
+            "median_deposit_per_m2": f"tenure_median_deposit_per_m2_{ht}",
+            "median_monthly_rent_per_m2": f"tenure_median_monthly_rent_per_m2_{ht}",
+        })
+        annual = annual.merge(sub, on=["lawd_cd", "year"], how="left")
+
     value_cols = [c for c in annual.columns
                   if c.startswith("tenure_")]
     out = df.merge(
         annual[["lawd_cd", "year", *value_cols]],
-        on=["lawd_cd", "year"],
-        how="left",
-    )
+        on=["lawd_cd", "year"], how="left")
     out["tenure_status"] = np.where(
         out[value_cols].notna().any(axis=1),
-        "live_partial",   # apartment-only scope; never 'live' from this source
+        "live",
         "missing_join_row",
     )
     return out
@@ -563,12 +634,12 @@ def validate_contract(df: pd.DataFrame, years: list[int]) -> dict:
     for col, expected in expected_status.items():
         actual = sorted(df[col].astype(str).unique().tolist())
         if actual != [expected]:
-            # When a panel was merged successfully, the status moves from
-            # the missing-artifact default to "live" (or "live_partial"
-            # for a scope-restricted source like the apartment-only
-            # tenure block). Treat both as warnings, not errors.
-            if (expected == "missing_local_artifact"
-                    and actual in (["live"], ["live_partial"])):
+            # When a panel was merged successfully, the status moves
+            # from the missing-artifact default to "live". (The earlier
+            # "live_partial" branch was the apt-only Block 1 state and
+            # was retired in step 4 of multi-housing tenure expansion;
+            # tenure is now either missing_local_artifact or live.)
+            if expected == "missing_local_artifact" and actual == ["live"]:
                 warnings.append(f"{col} includes live artifact rows: {actual}")
             else:
                 errors.append(f"{col} expected {expected}, got {actual}")

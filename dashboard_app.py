@@ -77,9 +77,17 @@ DISPLAY_COLS = [
     "tenure_n_rent_deals",
     "tenure_n_wolse",
     "tenure_n_jeonse",
-    "tenure_wolse_ratio",
-    "tenure_median_deposit_per_m2",
-    "tenure_median_monthly_rent_per_m2",
+    "tenure_wolse_ratio_all_residential",
+    "tenure_wolse_ratio_apt",
+    "tenure_wolse_ratio_rowhouse_multifamily",
+    "tenure_wolse_ratio_single_detached",
+    "tenure_wolse_ratio_officetel",
+    "tenure_median_deposit_per_m2_apt",
+    "tenure_median_deposit_per_m2_rowhouse_multifamily",
+    "tenure_median_deposit_per_m2_officetel",
+    "tenure_median_monthly_rent_per_m2_apt",
+    "tenure_median_monthly_rent_per_m2_rowhouse_multifamily",
+    "tenure_median_monthly_rent_per_m2_officetel",
     "tenure_scope",
     "national_redevelopment_intensity_zone_count",
     "national_redevelopment_intensity_area_m2",
@@ -405,10 +413,16 @@ INDEX_HTML = r"""<!doctype html>
           <option value="statnuri_unsold_mean_units" data-policy-aware="false">Pre-completion unsold mean (Block 4b, gu-year broadcast)</option>
           <option value="statnuri_completed_unsold_mean_units" data-policy-aware="false">Post-completion unsold mean (Block 4b, gu-year broadcast)</option>
           <option value="national_redevelopment_intensity_zone_count" data-policy-aware="false">Redevelopment zones (Block 4a, national-year)</option>
-          <option value="tenure_wolse_ratio" data-policy-aware="false">Wolse ratio (Block 1, apartment-only, gu-year broadcast)</option>
-          <option value="tenure_n_rent_deals" data-policy-aware="false">Apt rent deals (Block 1, apartment-only, gu-year broadcast)</option>
-          <option value="tenure_median_deposit_per_m2" data-policy-aware="false">Apt median deposit/m² 만원 (Block 1, apartment-only, gu-year broadcast)</option>
-          <option value="tenure_median_monthly_rent_per_m2" data-policy-aware="false">Apt median monthly rent/m² 만원 (Block 1, apartment-only, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_all_residential" data-policy-aware="false">Wolse ratio — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_apt" data-policy-aware="false">Wolse ratio — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_rowhouse_multifamily" data-policy-aware="false">Wolse ratio — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_single_detached" data-policy-aware="false">Wolse ratio — single / multi-generation (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_wolse_ratio_officetel" data-policy-aware="false">Wolse ratio — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_n_rent_deals" data-policy-aware="false">Rent deals — all residential (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_apt" data-policy-aware="false">Median deposit/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_rowhouse_multifamily" data-policy-aware="false">Median deposit/m² 만원 — rowhouse / multifamily (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_deposit_per_m2_officetel" data-policy-aware="false">Median deposit/m² 만원 — officetel (Block 1, RTMS multi-housing, gu-year broadcast)</option>
+          <option value="tenure_median_monthly_rent_per_m2_apt" data-policy-aware="false">Median monthly rent/m² 만원 — apt (Block 1, RTMS multi-housing, gu-year broadcast)</option>
           <option value="landuse_built_share" data-policy-aware="false">Land-use: built share (Block 4c, gu-year broadcast)</option>
           <option value="landuse_vegetation_share" data-policy-aware="false">Land-use: vegetation share (Block 4c, gu-year broadcast)</option>
           <option value="landuse_infrastructure_share" data-policy-aware="false">Land-use: infrastructure share (Block 4c, gu-year broadcast)</option>
@@ -568,19 +582,14 @@ function initControls() {
 function renderStatus() {
   const s = summary.statuses;
   const tenureStatus = s.tenure_status?.[0];
-  const tenureBadgeClass =
-    tenureStatus === "live_partial" ? "warn" :
-    tenureStatus === "live" ? "live" : "warn";
-  const tenureLabel = tenureStatus === "live_partial"
-    ? "Tenure (apt-only)"
-    : "Tenure";
+  const tenureBadgeClass = tenureStatus === "live" ? "live" : "warn";
   const badges = [
     ["Physical", s.physical_status?.[0], "live"],
     ["Pre-completion unsold", s.housing_stress_status?.[0], s.housing_stress_status?.[0] === "live" ? "live" : "warn"],
     ["Post-completion unsold", s.completed_unsold_status?.[0], s.completed_unsold_status?.[0] === "live" ? "live" : "warn"],
     ["Development", s.development_pressure_status?.[0], s.development_pressure_status?.[0] === "live" ? "live" : "warn"],
     ["Land-use (gu broadcast)", s.landuse_status?.[0], s.landuse_status?.[0] === "live" ? "live" : "warn"],
-    [tenureLabel, tenureStatus, tenureBadgeClass],
+    ["Tenure (RTMS multi-housing, gu broadcast)", tenureStatus, tenureBadgeClass],
     ["Vulnerability", s.vulnerability_status?.[0], "off"],
     ["Composite", s.composite_score_status?.[0], "off"],
   ];
